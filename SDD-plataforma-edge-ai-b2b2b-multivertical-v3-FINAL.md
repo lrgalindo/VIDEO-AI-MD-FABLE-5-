@@ -1,19 +1,97 @@
-# System Design Document (SDD) v3.2 — FINAL
+# System Design Document (SDD) v3.4 — FINAL
 
 ## Plataforma de Analítica "Hardware-Free" vía Edge AI — Motor Base Multi-Vertical (B2B2B)
 
-> **Estatus del documento:** VERSIÓN FINAL. Fuente única de verdad para desarrollo
-> técnico y salida al mercado. Toda afirmación sobre productos de Anthropic fue
-> verificada contra documentación oficial vigente al 2026-07-18 (pricing, estado de
-> betas, modelos activos/retirados). Toda afirmación competitiva fue calibrada contra
-> el material público de Agrex.ai vigente a la misma fecha. Los cambios de esta
-> iteración están detallados en el **Apéndice A — Changelog** al final del documento.
+> **Estatus del documento:** VERSIÓN FINAL. Fuente única de verdad de la
+> **arquitectura completa** del producto para desarrollo técnico y salida al
+> mercado. A partir de v3.4, este documento distingue explícitamente entre **la
+> arquitectura completa** (todo lo diseñado hasta hoy, sin recortes) y **el MLP
+> recortado** (Sección 3.1: qué se construye primero) — ninguna pieza de la
+> arquitectura completa se elimina; lo que no entra al MLP queda documentado,
+> validado y listo para activarse sin rediseño cuando el negocio lo requiera. Toda
+> afirmación sobre productos de Anthropic fue verificada contra documentación
+> oficial vigente al 2026-07-18 (pricing, estado de betas, modelos
+> activos/retirados). Toda afirmación competitiva fue calibrada contra el material
+> público de Agrex.ai vigente a la misma fecha. Toda afirmación sobre disponibilidad
+> de extensiones en el hosting destino (Supabase) y sobre política de créditos de
+> AWS/GCP fue verificada contra documentación oficial vigente a la misma fecha. Los
+> cambios de cada iteración están detallados en el **Apéndice A — Changelog** al
+> final del documento.
 
 ---
 
 ### Nota de versión
 
-**v3.2-FINAL (esta iteración):** auditoría integral en tres frentes y cierre del
+**v3.4-FINAL (esta iteración):** define el **MLP recortado** — qué se construye
+primero — sin quitar ni un feature de cara al cliente ni retroceder en la
+propuesta de valor frente a Agrex.ai. El recorte es exclusivamente de **madurez
+operativa que el cliente nunca ve**: orquestación multiagente, PKI, ambientes
+duplicados, y el rol Reseller completo (deferido a v2.0, no solo su comisión —
+corrección respecto a v3.3, que solo excluía la liquidación). Nueva **Sección 3.1**
+consolida las doce decisiones de alcance con su "gancho" de activación futura
+(dónde vive ya construido en este mismo documento y qué dispara su encendido, sin
+rediseño). Cambios que sí tocan arquitectura, todos validados por ejecución donde
+aplica DDL: (a) **credenciales del Edge Gateway para el MLP** pasan de mTLS a
+**refresh token** (access token 24h + refresh 90 días, revocación real en ≤24h vía
+`edge_gateways.status='revoked'`) — mTLS (Sección 8.7 ya escrita) queda como
+gancho para cuando un vertical lo exija contractualmente, no se descarta; (b)
+**hosting del MLP** se fija en Supabase + Cloudflare R2 + Render/Cloud Run +
+GitHub — verificado que ni AWS ($200 de crédito, cuenta se cierra a los 6 meses
+salvo upgrade a plan pagado) ni GCP ($300/90 días) sostienen una cuenta nueva sin
+reloj de expiración, mientras que estos sí; AWS/RDS quedan como ruta de escalamiento
+para Fase 4+; (c) **ambientes** se reducen a Dev+Prod para el MLP (suite pgTAP como
+gate obligatorio de promoción), QA/Staging como ambiente adicional para cuando el
+volumen lo justifique; (d) **tres refinamientos de Partners** que la revisión reveló
+como necesarios para el MLP y no estaban en el esquema: alta/baja en un solo paso,
+acceso por tiempo limitado (`partners.access_expires_at`, nueva columna, DDL
+validado por ejecución) y una matriz explícita de qué ve un Partner Admin/Viewer en
+el frontend; (e) **Motor de Acciones**: canales por defecto Slack+Telegram+Correo
+(costo marginal cero) con WhatsApp opt-in de costo pass-through explícito (no
+absorbido), más plantillas de reglas SOP de compliance (personal ausente en caja,
+apertura/cierre fuera de horario, cliente sin atender) sobre el mismo motor ya
+diseñado; (f) **zona de exclusión de personal** (`zone_type='staff_area'`) para no
+contar empleados como clientes; **demografía (edad/género) queda deliberadamente
+fuera por defecto** — refuerza Zero Biometrics como diferenciador de privacidad
+frente a Agrex, no una limitación técnica; (g) **MFA** viene de fábrica con
+Supabase Auth (configuración, no desarrollo); (h) **máquina de estados de
+onboarding/offboarding de Tenants** simplificada para el MLP (auto-registro →
+aprobación de un clic → activo; baja dispara retención + revocación de tokens). El
+Roadmap (Sección 13) se actualiza con el estimado recortado (8-13 semanas, antes
+10-19) y la Sección 12 completa (Enjambre/Managed Agents) queda intacta como
+Fase 4 — no se reescribe una sola línea, solo se reafirma que el MLP no la activa.
+
+**v3.3-FINAL:** cierre de portabilidad de hosting y barrido de
+gaps de ciclo de vida. (1) **Corrección bloqueante de arquitectura:** TimescaleDB
+está **deprecado para proyectos nuevos de Supabase** (Postgres 17; solo sobrevive
+en proyectos viejos sobre Postgres 15 hasta ~mayo 2026) — verificado contra la
+documentación oficial de Supabase. Como el destino de hosting de bajo costo/fallback
+es Supabase free tier, toda la capa time-series se rediseña sobre **particionamiento
+declarativo nativo de PostgreSQL + `pg_partman`** (Sección 8.6, reescrita), sin
+ninguna extensión no disponible en Supabase; el DDL de particionamiento se **validó
+por ejecución contra PostgreSQL 16 plano** y se documenta explícitamente la pérdida
+de la compresión columnar automática de Timescale y sus mitigaciones. (2) **Bugs
+técnicos corregidos y validados por ejecución:** se escribe el RLS completo y real
+(no "sigue el mismo patrón" en prosa) para las ocho tablas restantes (`sites`,
+`cameras`, `zones`, `users`, `partners`, `tenants`, `resellers`,
+`user_site_assignments`); se corrige un defecto en `agent_findings_write` que
+impedía a un subagente en contexto Partner escribir hallazgos; se agrega política de
+`INSERT` a `zone_dwell_sessions` (bloqueada por `FORCE RLS`); se decide y documenta
+explícitamente el RLS de `agent_run_metrics`; y se corrige el residual "2 niveles"
+del diagrama de la Sección 6. (3) **Secciones nuevas de ciclo de vida:** Flujo 6
+(referido de Reseller) y Flujo 7 (reemplazo de hardware / DR del Edge); credenciales
+del Edge por **mTLS** con rotación y revocación contra estado en DB (8.7); alertas
+escalonadas antes de pérdida de datos offline vía el Motor de Acciones (12.11);
+offboarding de Partner con derecho al olvido sobre `agent_findings` (12.12);
+descargas OTA resumibles con manejo de expiración de URL firmada (9.1); y una tabla
+de decisiones **Build-vs-Buy** (7.3). (4) **Enganche al Roadmap:** las seis piezas
+del punto (3) más la tabla Build-vs-Buy quedaban sin mención en la Sección 13 —
+diseñadas pero no ancladas al plan de ejecución. Se ubican explícitamente en Fase 1
+(mTLS, descargas resumibles, Build-vs-Buy — mecanismos definitivos que se
+construyen una sola vez) y Fase 3 (Flujo 6, Flujo 7, alertas escalonadas y
+offboarding — extensiones de Operación Interna y el Motor de Acciones). El resto
+del documento no se toca salvo donde estas correcciones exigen consistencia.
+
+**v3.2-FINAL:** auditoría integral en tres frentes y cierre del
 documento como versión definitiva. (1) **Negocio:** la Sección 10.1 se reescribe con
 una economía unitaria de dos planes (Base y Enterprise) y el costo del Enjambre
 Cognitivo se recalcula con los multiplicadores reales publicados por Anthropic
@@ -212,6 +290,13 @@ sensibilidad de precio alta** (Sección 10.1).
 
 ### 3. Alcance
 
+> **Nota v3.4:** esta sección describe el alcance de la **arquitectura completa**
+> del producto. La **Sección 3.1**, inmediatamente después, define el subconjunto
+> exacto — el MLP recortado — que se construye primero, con el "gancho" de dónde
+> vive cada pieza diferida y qué la activa sin rediseño. Toda esta Sección 3 sigue
+> siendo válida como diseño final; 3.1 es la capa de secuenciación de ejecución
+> encima de ella.
+
 #### Dentro del Alcance (MVP / MLP)
 
 * Despliegue del Edge Gateway como contenedor Docker (o ejecutable nativo) sobre el
@@ -271,24 +356,100 @@ sensibilidad de precio alta** (Sección 10.1).
 * **Selección Automática de Vertical por IA:** la asignación de vertical a un cliente
   es una decisión manual del SuperAdmin en el onboarding, no una clasificación
   automática por visión por computadora.
+* **Rol Reseller completo — no solo su facturación (corregido v3.4; en v3.3 solo se
+  excluía la comisión).** Revisión de alcance: ningún caso de uso descrito para el
+  MLP requirió un Reseller — todo lo necesario para el lanzamiento es la relación
+  Asset Owner↔Partner. El **flujo entero** (Flujo 6, alta de Reseller, portal de
+  gestión de cartera) queda fuera del MLP y se difiere a **v2.0**, no solo la
+  liquidación de su comisión (que de todos modos seguiría fuera de alcance por el
+  mismo principio ya aplicado a Partners: la plataforma provee atribución, no
+  cobro). La tabla `resellers`, su RLS y el Flujo 6 ya están completos y validados
+  en este documento (Secciones 5 y 8.3) — quedan **inertes** para el MLP, no
+  eliminados; se activan sin rediseño cuando exista el primer acuerdo de canal real
+  (ver Sección 3.1, decisión 2).
+* **Demografía (edad, género) — deliberadamente fuera por defecto (nuevo, v3.4).**
+  Es una capa de sensibilidad de dato mayor que la sola detección de `person` ya
+  cubierta por Zero Biometrics, y precisamente esa política (cero biometría, cero
+  demografía) es un diferenciador de privacidad frente a Agrex.ai (Sección 1), no
+  una limitación técnica a superar. Se evalúa **caso por caso** si un cliente
+  específico lo solicita explícitamente y bajo su propio consentimiento — nunca
+  como comportamiento por defecto de la plataforma.
+* **Vertical Banca — fuera del MLP (nuevo, v3.4).** El go-to-market del MLP se
+  enfoca en retail, logística y otros verticales "enterprise" no regulados (perfil
+  Walmart/La Torre). Esto ya era consistente con la restricción de la Sección 3
+  arriba (`yolo_retail.pt` como único checkpoint del MLP) — se hace explícito aquí
+  como decisión de mercado, no solo de modelo. Consecuencia directa: la restricción
+  ZDR/HIPAA BAA de Managed Agents (Sección 12.3) **ni siquiera aplica** en el MLP,
+  porque el MLP no usa Managed Agents (ver Sección 3.1, decisión 1) ni vende a
+  banca. La Sección 12.3 ya cubre el compliance necesario para cuando se entre a
+  ese vertical.
+
+---
+
+#### 3.1 MLP Recortado — Qué Se Construye Primero (nueva, v3.4)
+
+**Principio rector:** nada de lo que sigue quita un feature que el cliente
+experimenta. Lo que se recorta es exclusivamente **maquinaria interna** que no es
+visible ni monetizable en el año 1 del contrato: orquestación multiagente, PKI,
+ambientes duplicados, workflows de aprobación de varios pasos. Donde esta sección
+*agrega* algo respecto al diseño original (acceso por tiempo limitado, vista
+restringida de Partner, exclusión de personal, plantillas de SOP) es porque la
+revisión de alcance reveló que sí importa para la propuesta de valor, aunque no
+estuviera en el recorte inicial — no son features nuevas sin justificación, son
+gaps que el recorte hizo visibles.
+
+Cada decisión trae su **gancho de activación**: dónde vive ya construido en este
+documento y qué evento de negocio lo enciende, sin rediseño.
+
+| # | Decisión | Detalle | Gancho de activación futura |
+| --- | --- | --- | --- |
+| 1 | **Enjambre/Managed Agents → Fase 4, no MLP** | Copiloto y auditoría de stock corren sobre **Messages API directa** en el MLP (una sola llamada con imagen+prompt, Sección 12.4/12.5). Sin sandbox, sin sesiones, sin el multiplicador de ~15x en tokens (Sección 10.1). El cliente recibe exactamente las mismas dos funcionalidades. | La Sección 12 completa (sesiones por contexto, patrón de artefactos, evaluación de calidad) ya está escrita y validada — se activa entera en Fase 4 sin reescribir nada. |
+| 2 | **Reseller → fuera del MLP, diferido a v2.0** | Ningún caso de uso del MLP lo requiere; todo lo necesario es la relación Asset Owner↔Partner. Confirmado explícitamente por el negocio (no solo su comisión, como decía v3.3 — el flujo entero). | Flujo 6 y la tabla `resellers` (con su RLS) ya están completos y validados en el SDD — se activan cuando se cierre el primer acuerdo de canal real. |
+| 3 | **Partners (marcas/CPG) — se mantienen completos, con 3 refinamientos nuevos** | Alta/baja en un solo paso, acceso por tiempo limitado, y matriz explícita de vista restringida. Ver Secciones 4 y 5. | — (es MLP día 1) |
+| 4 | **Ambientes: Dev + Prod únicamente** | Suite pgTAP (Sección 8.4) como gate obligatorio antes de cualquier promoción Dev→Prod. | QA/Staging se agregan como ambiente adicional al mismo pipeline cuando el volumen de clientes lo justifique — no se rediseña el pipeline, se agrega un nodo más. |
+| 5 | **Credenciales del Edge Gateway: refresh token, no mTLS** | Access token de 24h + refresh token de 90 días (Sección 8.7). Revocación real: `edge_gateways.status='revoked'` bloquea el siguiente refresh — ventana máxima de exposición 24h. Sin PKI, sin diferencias de implementación entre Windows/Linux/Mac. | mTLS (Sección 8.7, ya escrito y validado en v3.3) se activa si algún vertical o cliente lo exige contractualmente. |
+| 6 | **Banca fuera del MLP** | Go-to-market enfocado en retail/logística/verticales "enterprise" no regulados. Consecuencia de la decisión 1: la restricción ZDR/HIPAA BAA de Managed Agents ni siquiera aplica en el MLP. | La Sección 12.3 ya cubre el compliance de banca para cuando se entre a ese vertical. |
+| 7 | **Motor de Acciones: Slack + Telegram + Correo por defecto; WhatsApp opt-in con costo pass-through** | Cero costo marginal en los tres canales por defecto (Sección 12.10). WhatsApp disponible desde el día 1 si el cliente lo quiere, con el costo de Meta reflejado explícitamente en su factura, no absorbido en el COGS. | — (ya es MLP día 1, solo con la etiqueta de costo correcta) |
+| 8 | **Plantillas de SOP de Compliance en el Motor de Acciones** | Mismo motor de reglas-por-umbral ya planeado para colas (Sección 12.10) — se agregan plantillas: personal no presente en zona de caja, apertura/cierre fuera de horario, cliente sin atender. No es una capacidad nueva, son más reglas sobre la infraestructura ya construida. | Plantillas adicionales por vertical se agregan igual, sin tocar el motor. |
+| 9 | **Zona de Exclusión de Personal sí; Demografía (edad/género) no** | Se agrega un tipo de zona `staff_area` que se excluye del conteo de clientes (Sección 6.1) — bajo costo, alto valor de precisión. Demografía queda deliberadamente fuera: más sensible que detectar `person`, y Zero Biometrics es ventaja de privacidad frente a Agrex.ai, no limitación (ver Sección 3, "Fuera de Alcance"). | Demografía se evalúa caso por caso si un cliente específico la pide bajo su propio consentimiento, nunca por defecto. |
+| 10 | **MFA en el login** | Viene de fábrica con Supabase Auth — es configuración, no desarrollo. Se incluye en el MLP sin mover el estimado de tiempo (Sección 7). | — |
+| 11 | **Onboarding/offboarding de Tenants: máquina de estados simple** | Auto-registro → `status='onboarding'` → aprobación de un clic del SuperAdmin → `status='active'` (Sección 5, Flujo 1 variante MLP). Baja: `status='inactive'` dispara retención + revocación de tokens (mecanismo de la decisión 5). | Quitar el paso de aprobación manual para hacerlo 100% self-service es borrar un solo paso del flujo, no rediseñarlo. |
+| 12 | **Hosting: Supabase + Cloudflare R2 + Render/Cloud Run + GitHub** | Ninguno de los tres tiene reloj de expiración para cuentas nuevas en 2026 — a diferencia de AWS (cuenta nueva se cierra a los 6 meses salvo upgrade a plan pagado, aunque conserva ~30 servicios "always-free" que no expiran) y GCP (crédito de $300 válido 90 días) — verificado contra documentación oficial de ambos proveedores (Sección 7). Todo el almacenamiento de objetos (snapshots + Model Registry) se unifica en Cloudflare R2 (API compatible con S3). | AWS/RDS quedan documentados como ruta de escalamiento (Sección 7) para cuando el volumen de Fase 4+ lo justifique — es una migración de proveedor de infraestructura equivalente (misma API S3), no un rediseño de arquitectura. |
+
+**Estimado de tiempo del MLP recortado (detalle y justificación en Sección 13):**
+
+| Fase | Antes del recorte (v3.3) | Después (v3.4, MLP recortado) |
+| --- | --- | --- |
+| Fase 1 (esquema + RLS + Edge Gateway + auth) | 2-4 semanas | **2-3 semanas** |
+| Fase 2 (Backoffice + Partners + dashboards) | 3-6 semanas | **3-5 semanas** |
+| Fase 3 (Operación Interna + Motor de Acciones + Copiloto/auditoría) | 5-9 semanas | **3-5 semanas** |
+| **Total MLP** | 10-19 semanas | **8-13 semanas** |
+
+La reducción más grande viene de sacar toda la maquinaria de Managed Agents
+(sesiones, patrón de artefactos, evaluación) de la Fase 3 — no de recortar ningún
+feature visible para el cliente.
 
 ---
 
 ### 4. Usuarios y Roles (IAM - Identity and Access Management)
 
-El modelo de identidad ahora tiene **dos niveles de tenancy**: el Asset Owner
-(tenant maestro, cliente contractual directo) y, opcionalmente, uno o más Partners
-(sub-tenants) que el propio Asset Owner da de alta dentro de su cuenta.
+El modelo de identidad tiene **dos niveles contractuales de tenancy** — el Asset
+Owner (tenant maestro, cliente contractual directo) y, opcionalmente, uno o más
+Partners (sub-tenants) que el propio Asset Owner da de alta dentro de su cuenta —
+sobre los que el **aislamiento de datos opera en tres niveles**: `tenant → site →
+partner` (un usuario regional puede acotarse a sucursales específicas dentro del
+tenant, además del corte tenant/partner). La implementación completa de ese
+aislamiento de tres niveles vía RLS está en la Sección 8.3.
 
 | Rol | Nivel | Descripción | Permisos Clave |
 | --- | --- | --- | --- |
 | **SuperAdmin (Plataforma)** | Plataforma | Administrador central del sistema SaaS. No es un registro de la tabla `users` (ver Sección 8.5) — es acceso interno de la plataforma. | Crear Asset Owners (tenants maestros) y Resellers. Asignar el `vertical_type` de cada cliente. Registrar IDs de Edge Gateways. Mapear polígonos (zonas/ROIs) sobre fotogramas de cámaras. Gestionar flota (actualizaciones OTA de código y de modelos). Publicar nuevos checkpoints en el Model Registry. Único rol con acceso *break-glass* auditado cross-tenant. |
-| **Reseller Admin (Distribuidor/Canal)** *(nuevo, inferido — validar)* | Reseller | Socio de canal que onboardea y da soporte comercial a una cartera de Asset Owners. | Ve metadata de gestión (nombre, estado, sedes) de los Tenants bajo su `reseller_id`. **No ve telemetría ni tableros operativos de esos Tenants por defecto** — mismo principio de mínimo privilegio que un Partner; el Asset Owner tendría que habilitárselo explícitamente si en el futuro se decide lo contrario. Puede iniciar el alta de un nuevo Tenant en su cartera, sujeto a aprobación del SuperAdmin. |
+| **Reseller Admin (Distribuidor/Canal)** *(fuera del MLP, diferido a v2.0 — ver Sección 3.1, decisión 2)* | Reseller | Socio de canal que onboardea y da soporte comercial a una cartera de Asset Owners. Rol y tabla completos y validados en este documento, pero **inertes hasta v2.0** — ningún caso de uso del MLP lo requiere. | Ve metadata de gestión (nombre, estado, sedes) de los Tenants bajo su `reseller_id`. **No ve telemetría ni tableros operativos de esos Tenants por defecto** — mismo principio de mínimo privilegio que un Partner; el Asset Owner tendría que habilitárselo explícitamente si en el futuro se decide lo contrario. Puede iniciar el alta de un nuevo Tenant en su cartera, sujeto a aprobación del SuperAdmin. |
 | **Tenant Admin (Asset Owner / Cliente Maestro)** | Tenant | Gerente de Operaciones, TI o Seguridad del dueño de la infraestructura (supermercado, banco, bodega, centro comercial). | Visualizar tráfico, colas, ocupación y mapas de calor de **toda** su infraestructura (todas sus sucursales). Acceso completo al Copiloto sobre sus propios datos. **Backoffice de Usuarios:** crear usuarios `operator`/`viewer` y asignarles una o varias sucursales específicas (ver Sección 8.2). **Módulo de Reventa:** crear, editar, desactivar Partners; asignar o revocar el acceso de cada Partner a zonas (ROIs) específicas, a nivel de sucursal completa o de zona individual. |
 | **Tenant Operator/Viewer Regional** *(nuevo)* | Tenant, acotado | Gerente o analista de una o varias sucursales específicas, sin visibilidad del resto de la cadena. | Visualiza tráfico, colas y mapas de calor **únicamente de las sucursales que el Tenant Admin le asignó** vía `user_site_assignments` (Sección 8.2). `operator` puede además ajustar configuración operativa de sus sucursales asignadas; `viewer` es de solo lectura. |
 | **Partner Admin (Sub-Tenant / Socio Comercial)** | Sub-Tenant | Gerente de Trade Marketing, Category Manager, o equivalente del socio comercial que opera dentro del espacio del Asset Owner (ej. Nestlé dentro de La Torre; una aseguradora dentro de una sucursal bancaria). Es dado de alta **por el Asset Owner**, nunca directamente por el SuperAdmin. | Visualizar **únicamente** los datos de las zonas (ROIs) que el Asset Owner le asignó explícitamente — puede ser una sucursal completa o zonas puntuales dentro de ella (Sección 8.3). Acceso al Copiloto acotado a ese mismo alcance. No puede ver datos operativos internos del Asset Owner ni de otros Partners. |
 | **Viewer (Analista)** | Tenant, Sub-Tenant o Reseller | Usuario de solo lectura, existe en cualquiera de los tres niveles. | Consultar y exportar reportes en PDF/CSV dentro del alcance de su nivel. Sin permisos de configuración ni de gestión de Partners/usuarios. |
-| **Service Account (Edge Gateway)** | Sistema | Sistema físico en sucursal/bodega. | Autenticación máquina a máquina (JWT/API Key) para publicar telemetría y para solicitar al Model Manager la descarga del modelo del vertical asignado. |
+| **Service Account (Edge Gateway)** | Sistema | Sistema físico en sucursal/bodega. | **Para el MLP (v3.4):** autenticación por **access token (24h) + refresh token (90 días)** (Sección 8.7) para publicar telemetría y para solicitar al Model Manager la descarga del modelo del vertical asignado. Revocable server-side: `edge_gateways.status='revoked'` bloquea el siguiente refresh, ventana máxima de exposición 24h. El mecanismo de **certificado cliente mTLS** (también en Sección 8.7, escrito y validado en v3.3) queda como gancho para cuando un vertical o cliente lo exija contractualmente — no se descarta, se activa sin rediseño. |
 
 **Regla de aislamiento explícita (ampliada en v3.0):** ningún rol por debajo del
 SuperAdmin tiene visibilidad fuera de su alcance asignado — ni siquiera por omisión.
@@ -299,6 +460,37 @@ asignación, aunque pertenezcan al mismo tenant; (c) un Reseller Admin nunca ve
 telemetría de sus Tenants por defecto; (d) nadie ve la existencia de Asset Owners,
 Partners o Resellers ajenos a su propia jerarquía. La implementación completa de
 esta regla vía Row-Level Security está en la Sección 8.
+
+**MFA en el login (nuevo, v3.4 — Sección 3.1, decisión 10):** autenticación
+multifactor viene de fábrica con Supabase Auth para todos los roles — es
+configuración a nivel de proyecto (política de MFA obligatoria u opcional por rol),
+no desarrollo. Se incluye en el MLP sin mover el estimado de tiempo de la Sección 7.
+
+#### 4.1 Vista Restringida del Partner en el Frontend (nueva, v3.4)
+
+La Sección 8.3 (RLS) ya garantiza que un Partner **nunca puede leer** datos fuera de
+su alcance a nivel de base de datos, aunque alguien manipulara la UI o hiciera
+llamadas directas a la API. Lo que no estaba enumerado en versiones anteriores es
+qué **pantallas se renderizan** para cada rol de Partner en el frontend — una
+decisión de producto encima de esa garantía de seguridad, no un mecanismo de
+seguridad en sí mismo. Matriz explícita para el MLP:
+
+| Pantalla / Módulo | Partner Admin | Partner Viewer |
+| --- | --- | --- |
+| Dwell Time / heatmap de sus zonas asignadas | ✅ | ✅ |
+| Copiloto (acotado a su alcance, Sección 12.4) | ✅ | ✅ |
+| Exportar reportes PDF/CSV | ✅ | ✅ |
+| Módulo de Reventa (gestionar otros Partners) | ❌ | ❌ |
+| Backoffice de Usuarios del Tenant | ❌ | ❌ |
+| Configuración del Motor de Acciones (Sección 12.10) | ❌ | ❌ |
+| Fleet / Edge Gateway, Model Registry | ❌ | ❌ |
+| Facturación | ❌ | ❌ |
+
+Un Partner Admin difiere de un Partner Viewer únicamente en permisos de escritura
+*dentro* de su propio alcance (ej. configurar alertas de sus zonas si el negocio lo
+habilita más adelante) — ninguno de los dos accede a las filas marcadas ❌, ni
+siquiera en modo lectura, porque son módulos de gestión del Asset Owner, no de
+consumo de datos.
 
 ---
 
@@ -318,14 +510,34 @@ esta regla vía Row-Level Security está en la Sección 8.
 4. **Configuración de Credenciales:** el SuperAdmin genera un código de activación de
    un solo uso desde el portal, que se ingresa manualmente durante la instalación del
    Edge Gateway para vincularlo con la sede correspondiente, inyectando remotamente
-   las URL RTSP y el `vertical_type` asignado.
+   las URL RTSP y el `vertical_type` asignado. **Para el MLP (v3.4):** el canje del
+   código emite un **access token (24h) + refresh token (90 días)** — no un
+   certificado mTLS (Sección 8.7, decisión 5 de la Sección 3.1); el Edge Gateway
+   renueva proactivamente antes de expirar, y la revocación (`edge_gateways.
+   status='revoked'`) bloquea el siguiente refresh con ventana máxima de exposición
+   de 24h.
 5. **Descarga del Modelo (nuevo):** el Edge Gateway, al validar sus credenciales,
    consulta al Model Manager en la nube qué checkpoint corresponde a su vertical,
-   descarga el archivo `.pt` correspondiente (ej. `yolo_retail.pt`), verifica su
-   checksum, y lo carga en memoria. Solo este modelo permanece cargado.
+   descarga el archivo `.pt` correspondiente (ej. `yolo_retail.pt`) con reanudación
+   por `Range` si la conexión se corta (Sección 9.1), verifica su checksum, y lo
+   carga en memoria. Solo este modelo permanece cargado.
 6. **Validación:** el Edge Gateway verifica la conexión RTSP, inicia los hilos de
    inferencia con el modelo correcto ya cargado, y envía un latido (Heartbeat) de
    estado "Online" a la nube.
+
+**Variante MLP — onboarding self-service del Tenant (nuevo, v3.4, Sección 3.1
+decisión 11):** el paso 1 admite una máquina de estados más ligera que "el
+SuperAdmin crea el tenant manualmente" — un Asset Owner puede **auto-registrarse**
+desde un formulario público, creando su fila en `tenants` directamente con
+`status='onboarding'`. El SuperAdmin revisa y aprueba con **un clic** (confirma
+plan comercial y `vertical_type`), pasando el tenant a `status='active'` — recién
+ahí arranca el resto del Flujo 1 (pasos 2-6). La baja de un Tenant es simétrica:
+pasar a `status='inactive'` dispara la política de retención de la Sección 8.5 y
+la revocación de tokens del Edge Gateway (mecanismo de la decisión 5 arriba) — el
+mismo camino de purga que ya usa el offboarding de Partner (Sección 12.12), ahora
+aplicado a nivel de Tenant. **Gancho de evolución:** quitar el clic de aprobación
+del SuperAdmin para hacerlo 100% self-service es eliminar un solo paso de la
+máquina de estados, no rediseñarla.
 
 #### Flujo 2: Mapeo Espacial de la Sede (Polígonos/ROIs)
 
@@ -340,23 +552,40 @@ esta regla vía Row-Level Security está en la Sección 8.
 4. **Guardado:** el portal actualiza el JSON de la sede en la base de datos cloud
    para que el Controlador Matemático comience a evaluar las intersecciones.
 
-#### Flujo 3: Módulo de Reventa — El Asset Owner Provisiona a un Partner (nuevo)
+#### Flujo 3: Módulo de Reventa — El Asset Owner Provisiona a un Partner (nuevo;
+reescrito v3.4 — alta/baja en un solo paso, Sección 3.1 decisión 3/2.1)
 
-1. **Ingreso:** el Asset Owner Admin inicia sesión y entra a la sección "Partners" de
-   su portal.
-2. **Alta de Partner:** crea un nuevo Partner (ej. "Nestlé Guatemala"), define un
-   nombre de contacto y un correo de invitación.
-3. **Asignación de Alcance:** selecciona, de la lista de ROIs de sus propias sedes,
-   cuáles quedan visibles para ese Partner (ej. únicamente los ROIs etiquetados como
-   góndolas de lácteos en las 12 tiendas donde Nestlé tiene presencia). Esta acción
-   cambia el `owner_type` de esos ROIs a `PARTNER` y su `owner_id` al Partner recién
-   creado — sin afectar la visibilidad que el propio Asset Owner tiene sobre esos
-   mismos ROIs, que conserva siempre.
-4. **Invitación:** el sistema envía una invitación al Partner con credenciales
-   propias y el rol `Partner Admin`, acotado exactamente a lo asignado en el paso 3.
-5. **Gestión continua:** el Asset Owner puede revocar o ampliar el acceso de un
-   Partner en cualquier momento; el cambio se refleja de inmediato en lo que ese
-   Partner puede consultar.
+**Alta en un solo paso (v3.4):** versiones anteriores describían un asistente de
+varios pasos (ingresar, crear Partner, asignar alcance, invitar, como pasos
+separados de UI). La revisión de alcance confirmó que esto no necesita ser un
+wizard — el Asset Owner Admin llena **un solo formulario** (nombre del Partner,
+correo de contacto, qué sedes/zonas comparte) y **una sola acción** ejecuta las
+tres operaciones de forma atómica:
+
+1. **Formulario único:** el Asset Owner Admin, desde la sección "Partners" de su
+   portal, llena nombre, correo de invitación, y selecciona de la lista de zonas de
+   sus propias sedes cuáles quedan visibles para ese Partner (ej. únicamente las
+   zonas etiquetadas como góndolas de lácteos en las 12 tiendas donde Nestlé tiene
+   presencia).
+2. **Ejecución atómica:** al enviar, el sistema en una sola transacción (a) crea la
+   fila en `partners`, (b) reasigna el `owner_type`/`owner_partner_id` de las zonas
+   seleccionadas al Partner recién creado — sin afectar la visibilidad que el
+   propio Asset Owner tiene sobre esas mismas zonas, que conserva siempre (Sección
+   8.3) —, y (c) envía la invitación con credenciales propias y el rol
+   `Partner Admin`, acotado exactamente a lo seleccionado en el paso 1.
+3. **Acceso por tiempo limitado (nuevo, v3.4 — Sección 3.1 decisión 3/2.2):** el
+   mismo formulario permite fijar opcionalmente una fecha de expiración del acceso
+   (`partners.access_expires_at`, Sección 8.0). Si se deja en blanco, el acceso es
+   indefinido — el Asset Owner puede optar por eso libremente. Si se define, un job
+   programado (misma cadencia batch del Motor Matemático, Sección 6) revisa
+   diariamente: si `access_expires_at < now()` y `partners.status = 'active'`,
+   ejecuta el **mismo camino de revocación del offboarding manual** (Sección
+   12.12) — no es un mecanismo nuevo, es el offboarding ya construido, disparado
+   por fecha en vez de por acción manual del Asset Owner. Útil para activaciones de
+   marca por temporada (ej. una promoción de fin de año con un Partner puntual).
+4. **Gestión continua:** el Asset Owner puede revocar o ampliar el acceso de un
+   Partner en cualquier momento (incluyendo mover o quitar `access_expires_at`); el
+   cambio se refleja de inmediato en lo que ese Partner puede consultar.
 
 #### Flujo 4: Consumo Diario del Partner (ex-Marca / Trade Marketing)
 
@@ -385,6 +614,60 @@ esta regla vía Row-Level Security está en la Sección 8.
 3. **Valor dual:** este mismo tablero es la base sobre la cual el Asset Owner decide
    qué ROIs le conviene compartir en el Flujo 3 — la capa operativa y la capa de
    reventa comparten la misma fuente de datos, sin duplicar infraestructura.
+
+#### Flujo 6: Referido de Tenant por un Reseller (nuevo, v3.3 — fuera del MLP,
+diferido a v2.0 según Sección 3.1 decisión 2)
+
+Cierra el ciclo de vida comercial del rol Reseller Admin, ya definido en la Sección
+4. **Este flujo queda completo y validado en el documento pero inerte para el MLP**
+— ningún caso de uso del lanzamiento lo requiere; se activa sin rediseño cuando
+exista el primer acuerdo de canal real.
+
+1. **Referido:** el Reseller Admin, desde su portal, inicia el alta de un nuevo
+   Tenant en su cartera (nombre, contacto, vertical propuesto). El sistema crea la
+   fila en `tenants` con `status='onboarding'` y `reseller_id` ya asignado a ese
+   reseller — la escritura corre por el canal de aprovisionamiento, no da al
+   reseller acceso a telemetría.
+2. **Aprobación:** el referido queda pendiente de aprobación del SuperAdmin, que
+   confirma el contrato, asigna/valida el vertical definitivo y pasa el tenant a
+   `status='active'`. Solo entonces arranca el Flujo 1 (onboarding e instalación).
+3. **Visibilidad acotada del Reseller:** a partir del alta, el Reseller Admin ve
+   **metadata de gestión** de sus Tenants (nombre, estado, número de sedes) vía el
+   RLS de `tenants` scoped por `reseller_id` (Sección 8.3) — **nunca** telemetría ni
+   tableros operativos, mismo principio de mínimo privilegio que un Partner.
+4. **Sin liquidación en la plataforma:** la comisión del Reseller sobre esos Tenants
+   es un acuerdo externo (ver exclusión de alcance en la Sección 3). La plataforma
+   provee la *atribución* (qué Tenants están bajo qué Reseller), no el cobro.
+
+#### Flujo 7: Reemplazo de Hardware / DR del Edge Gateway (nuevo, v3.3)
+
+Escenario real y frecuente en CENAM: la computadora prestada (BYOD) o el Mac Mini de
+leasing que corre el Edge Gateway se daña, se roba, o se reemplaza. Sin un flujo
+definido, el riesgo es duplicar `site`/`cameras` o perder la trazabilidad de qué
+hardware sirvió a qué sede.
+
+1. **Alta de reemplazo:** el SuperAdmin genera un código de activación de un solo
+   uso **marcado como "reemplazo de `edge_id = X`"**. Este código reutiliza el
+   `site_id` y las filas de `cameras` existentes — no crea sedes ni cámaras nuevas.
+2. **Instalación:** se instala el Edge Gateway en el hardware nuevo y se canjea el
+   código (mismo mecanismo del Flujo 1, paso 4). El nuevo gateway obtiene su propio
+   certificado mTLS (Sección 8.7) y descarga el modelo del vertical ya asignado a
+   esa sede.
+3. **Trazabilidad y garantía:** la nueva fila de `edge_gateways` referencia a la
+   anterior vía `replaced_edge_gateway_id` (FK a sí misma). El registro viejo pasa a
+   `status='decommissioned'` y su certificado se **revoca** (Sección 8.7) — un
+   gateway dado de baja no puede reconectarse aunque su certificado siga
+   criptográficamente vigente.
+4. **Continuidad de datos:** la telemetría histórica de la sede vive en la nube
+   (particionada por `site`/`camera`, no por `edge_id`), así que el reemplazo del
+   hardware no pierde ni un dato del histórico — solo se reanuda el flujo de
+   ingesta desde el gateway nuevo.
+
+Columnas nuevas en `edge_gateways` para soportar Flujos 7 y la Sección 8.7
+(`replaced_edge_gateway_id`, ampliación del enum `status`, más
+`refresh_token_hash`/`refresh_token_expires_at` para el mecanismo del MLP en
+8.7.0, o `cert_serial`/`cert_expires_at` si se activa mTLS en 8.7.1): ver el DDL
+completo en la Sección 8.7.
 
 ---
 
@@ -428,10 +711,12 @@ esta regla vía Row-Level Security está en la Sección 8.
   ├─ Backoffice de Usuarios (*NUEVO*) │  cameras → zones; users, ├─ API de manifiesto/
   │    └─ CRUD de Partners, asignación│  user_site_assignments,  │  distribución con
   │       de zonas a owner_type=      │  partners — todo con RLS │  checksum firmado
-  │       PARTNER; asignación de      │  de 2 niveles)           │
-  │       sedes a usuarios operator/  └─ Time-Series DB           │
-  │       viewer regionales              (tracking_coordinates,   │
-  │                                       PostgreSQL+Timescale)   │
+  │       PARTNER; asignación de      │  de 3 niveles:           │
+  │       sedes a usuarios operator/  │  tenant→site→partner)    │
+  │       viewer regionales           └─ Time-Series             │
+  │                                      (tracking_coordinates,   │
+  │                                      PostgreSQL nativo +      │
+  │                                      pg_partman — ver 8.6)    │
           │                                         ▲             └──────────┬──────────┘
           ▼                                         │                        │
 [ Capa Agéntica (Enjambre Claude) ] ──────────────────┘                        │
@@ -480,6 +765,19 @@ calcular el *Dwell Time*, requerimos un algoritmo de Tracking Multi-Objeto (MOT)
   entrar minutos después, ByteTrack le asignará un nuevo ID. Esto es aceptable, ya
   que las métricas de *Dwell Time* se calculan por "sesión de permanencia frente al
   ROI", no rastreando el journey completo por toda la instalación.
+* **Zona de Exclusión de Personal (nuevo, v3.4 — Sección 3.1, decisión 9):** una
+  zona puede etiquetarse con `zone_type = 'staff_area'` (convención de valor sobre
+  la columna ya existente `zones.zone_type`, sin migración de esquema — es texto
+  libre por diseño, Sección 8.0) para marcar espacios donde solo debe operar
+  personal (detrás de mostrador, bodega interna, caseta de seguridad). El Motor
+  Matemático **excluye del conteo de clientes** cualquier detección cuya zona activa
+  sea `staff_area` al calcular tráfico/dwell time agregado — sin esto, el personal
+  que pasa horas frente a una cámara infla artificialmente las métricas de
+  ocupación y sesga el Copiloto. Es una exclusión de conteo, no una zona de
+  identificación de personal: sigue sin capturarse ningún dato biométrico ahí; solo
+  cambia si esa detección de `person` cuenta como "cliente" en los agregados. La
+  misma zona sirve además como base de la plantilla SOP "personal no presente en
+  zona de caja" (Sección 12.10).
 
 ---
 
@@ -513,11 +811,19 @@ sin tocar el resto del stack.
     y continúa operando con él hasta que la descarga se complete exitosamente.
 
 * **Cloud Backend:** `Node.js (NestJS)` o `Python (FastAPI)`.
-* **Base de Datos Principal:** `PostgreSQL` con la extensión `TimescaleDB`
-  (optimizada para series de tiempo).
-* **Model Registry (nuevo):** bucket `S3` versionado, con una API ligera de
-  manifiesto (`GET /v1/models/{vertical_type}/manifest`) que devuelve la versión más
-  reciente del checkpoint, su URL de descarga firmada y su checksum SHA256.
+* **Base de Datos Principal:** `PostgreSQL` (16/17) con **particionamiento
+  declarativo nativo + `pg_partman`** para la capa time-series (Sección 8.6). *Nota
+  de portabilidad (v3.3):* versiones anteriores usaban `TimescaleDB`, que quedó
+  **deprecado para proyectos nuevos de Supabase** — el destino de hosting de bajo
+  costo/fallback del proyecto. El esquema ahora corre sin cambios sobre Supabase
+  free tier (Postgres 17), RDS o Postgres local, usando solo extensiones
+  disponibles en las tres.
+* **Model Registry (nuevo):** bucket de object storage versionado (Cloudflare R2
+  para el MLP — API compatible con S3, ver nota de Cloud Hosting abajo), con una API
+  ligera de manifiesto (`GET /v1/models/{vertical_type}/manifest`) que devuelve la
+  versión más reciente del checkpoint, su URL de descarga firmada y su checksum
+  SHA256. La descarga soporta reanudación por `Range` y re-pedido de manifiesto ante
+  expiración de URL firmada (Sección 9.1).
 * **Motor Cognitivo:** `API de Anthropic (Claude)`. **Nota de vigencia
   (verificada 2026-07):** Claude 3.5 Sonnet — el modelo citado en versiones
   anteriores de este documento — fue **retirado por Anthropic en octubre 2025** y
@@ -529,9 +835,22 @@ sin tocar el resto del stack.
   el sandbox de Managed Agents. Detalle completo y justificación de costos en la
   Sección 12.5. El código debe referenciar modelos vía configuración (no
   hardcodeados) para absorber futuros reemplazos sin release.
-* **Cloud Hosting:** `AWS (EC2/ECS, RDS, S3)` — el mismo `S3` que almacena snapshots
-  de auditoría ahora también aloja el Model Registry, en un bucket/prefijo separado
-  con políticas de acceso propias.
+* **Cloud Hosting (reescrito v3.4 — Sección 3.1, decisión 12):** para el MLP,
+  **Supabase (Postgres gestionado + Auth + MFA) + Cloudflare R2 (object storage,
+  API compatible con S3) + Render/Cloud Run (backend) + GitHub (código/CI)**. El
+  mismo bucket R2 que almacena snapshots de auditoría también aloja el Model
+  Registry, en un bucket/prefijo separado con políticas de acceso propias.
+  **Justificación (verificado contra documentación oficial de cada proveedor,
+  2026-07):** una cuenta nueva de **AWS** recibe hasta $200 en créditos pero la
+  cuenta **se cierra a los 6 meses** salvo que se convierta a plan pagado (más de
+  30 servicios "always-free" no expiran, pero eso no evita el cierre de cuenta); una
+  cuenta nueva de **GCP** recibe $300 válidos solo **90 días**. Ninguno de los dos
+  sostiene una cuenta nueva de forma indefinida sin conversión a facturación activa
+  desde el día uno — Supabase/Cloudflare R2/Render/Cloud Run/GitHub sí lo hacen en
+  sus respectivos free tiers, sin ese reloj de expiración. **AWS/RDS quedan como
+  ruta de escalamiento documentada** para Fase 4+ cuando el volumen lo justifique —
+  es una migración de proveedor sobre una API equivalente (S3), no un rediseño de
+  arquitectura (ver tabla Build-vs-Buy, Sección 7.3).
 
 #### 7.1 Gestión de Flota (Fleet Management) y Actualizaciones
 
@@ -540,9 +859,10 @@ Multi-Vertical, **hay dos tipos de actualización independientes** que la flota 
 soportar: actualización de **código** (la imagen Docker del Edge Gateway) y
 actualización de **modelo** (un nuevo checkpoint `.pt` para un vertical dado).
 
-* **Mecanismo OTA (Over-The-Air):** se utilizará un orquestador de Edge Computing
-  (como Portainer Edge, BalenaOS, o un cliente ligero de AWS IoT Greengrass) para las
-  actualizaciones de código.
+* **Mecanismo OTA (Over-The-Air):** **Portainer Community Edition** (self-hosted,
+  gratis, sin límite de dispositivos de un tercero — decisión Build-vs-Buy de la
+  Sección 7.3) para el MLP. BalenaOS o un cliente ligero de AWS IoT Greengrass
+  quedan como alternativas si el volumen de flota en Fase 4+ lo justifica.
 * **Actualización de Modelo (nuevo):** cuando el SuperAdmin publica una nueva versión
   de `yolo_retail.pt` en el Model Registry, los Edge Gateways de vertical retail la
   detectan en su próximo chequeo de manifiesto y la descargan de forma independiente
@@ -578,12 +898,36 @@ puede tener una distribución distinta pero el mismo principio aplica.
   Workers de una misma sede comparten el mismo modelo cacheado en disco local, para
   no re-descargarlo por cada Worker.
 
+#### 7.3 Decisiones Build-vs-Buy (nueva, v3.3; tabla actualizada v3.4 — Sección 3.1)
+
+Registro explícito de las decisiones de construir vs. adoptar, para que el equipo no
+las re-litigue en cada sprint. El criterio transversal: **construir solo lo que es
+diferenciador** (el aislamiento B2B2B de tres niveles y el Motor Base multi-vertical
+lo son; casi nada más lo es en el MLP). Todo lo "buy" elegido tiene costo cero o casi
+cero hasta tener volumen real, coherente con la sensibilidad de precio del mercado.
+
+| Componente | Decisión | Motivo (una línea) | Trade-off aceptado |
+| --- | --- | --- | --- |
+| Orquestación/sandboxing de agentes | **Buy — Claude Managed Agents, pero diferido a Fase 4 (v3.4)** | No es diferenciador (lo es el aislamiento B2B2B); construirlo son meses de infra sin ventaja competitiva. El MLP usa **Messages API directa** (Sección 12.4) para Copiloto y auditorías — sin sandbox, sin el multiplicador 15x de tokens (Sección 3.1, decisión 1). | Ninguno para el cliente (recibe las mismas funcionalidades); Fase 4 activa la Sección 12 completa sin reescribirla. |
+| Auth / Identity Provider + MFA | **Buy — Supabase Auth** | Gratis dentro del mismo proyecto de DB; se integra nativamente con el patrón de GUCs de la Sección 8.2. MFA viene de fábrica (Sección 3.1, decisión 10) — configuración, no desarrollo. | Acoplamiento a Supabase (mitigado: es solo IdP; el RLS es portable). |
+| Base de datos / Time-Series | **Buy — Postgres nativo + `pg_partman` sobre Supabase free tier** | Decisión forzada por la deprecación de TimescaleDB en Supabase (Sección 8.6); portable a RDS y local. | Pérdida de compresión columnar automática (mitigado con tiering a Glacier, 8.6). |
+| Object storage (snapshots + Model Registry) | **Buy — Cloudflare R2 (v3.4)** | API compatible con S3; free tier sin reloj de expiración de cuenta, a diferencia de AWS/GCP (verificado, Sección 7). | Migrar a S3/AWS en Fase 4+ es cambio de endpoint sobre API equivalente, no rediseño. |
+| Backend / Compute | **Buy — Render o Cloud Run (v3.4)** | Free tier sin expiración de cuenta; despliegue continuo desde GitHub sin infraestructura propia que operar. | Límites de free tier bajo carga alta (re-evaluar al escalar a Fase 4+). |
+| Canal WhatsApp (Motor de Acciones) | **Buy — Meta Cloud API directo, sin BSP** | Meta lo exige (no hay "build"); WhatsApp es el canal dominante en CENAM. **Opt-in con costo pass-through explícito (v3.4)** — Slack, Telegram y correo son el default sin costo marginal (Sección 12.10). | El costo de Meta se refleja en la factura del cliente, no se absorbe en el COGS. |
+| Orquestador OTA de flota | **Buy — Portainer Community Edition** | Gratis, self-hosted, sin límite de dispositivos de un tercero que pueda cambiar de términos. | Operar el orquestador nosotros (aceptable: es infra estándar). |
+| Observabilidad/monitoreo | **Buy — Grafana Cloud free tier** | Evita sobre-ingeniería de un stack Prometheus+Grafana propio antes de tener volumen que lo justifique. | Límites del free tier (re-evaluar al escalar). |
+| Facturación al Asset Owner | **Buy — Stripe** | Sin costo fijo hasta la primera transacción; construir facturación propia es riesgo PCI innecesario. | Comisión por transacción de Stripe (aceptable vs. riesgo de cumplimiento). |
+| Credenciales del Edge Gateway | **Buy/Build ligero — access + refresh token (MLP, v3.4)**; **CA interna mTLS diferida a Fase 4+** (Sección 8.7) | Sin PKI, sin diferencias de implementación entre Windows/Linux/Mac; revocación real en ≤24h basta para el MLP (Sección 3.1, decisión 5). La CA interna sigue siendo la decisión correcta cuando un vertical la exija contractualmente, pero no antes. | Ventana de exposición de hasta 24h tras revocar (vs. revocación inmediata de mTLS) — aceptable para el perfil de riesgo del MLP. |
+| Aislamiento B2B2B (RLS 3 niveles) | **Build** | **Es el diferenciador central.** No hay "buy" que dé aislamiento tenant→site→partner garantizado en DB. | Complejidad de RLS (mitigada con la suite pgTAP como gate, Sección 8.4). |
+| Motor Base multi-vertical (Edge Gateway) | **Build** | Diferenciador: un solo código, modelo intercambiable por vertical (Sección 6.1). | Ingeniería propia de visión/tracking (núcleo del producto). |
+
 ---
 
 ### 8. Modelo de Datos y Arquitectura Multi-Tenant (Esquema Físico Ejecutable)
 
 Esta sección reemplaza el esquema conceptual de v2.0 con el **esquema físico
-completo**, en DDL ejecutable de PostgreSQL/TimescaleDB. Es la referencia autoritativa
+completo**, en DDL ejecutable de PostgreSQL (nativo, sin extensiones no disponibles
+en Supabase — ver Sección 8.6). Es la referencia autoritativa
 para arrancar coding — cualquier discrepancia entre esta sección y el resto del
 documento (que usa nombres de producto en prosa, ej. "ROI", "sede") se resuelve a
 favor de esta sección para efectos de implementación.
@@ -616,7 +960,7 @@ zones (ROIs, polígonos) ◄────────────────┘ 
     │ 1                              │ 1
     │ N (agregación batch)           │ N
     ▼                                ▼
-zone_dwell_sessions            tracking_coordinates (hypertable, vía camera_id)
+zone_dwell_sessions            tracking_coordinates (particionada RANGE por "time", vía camera_id)
 
 users (tenant_id | reseller_id, + partner_id opcional; role: admin/operator/viewer)
     │ N
@@ -629,12 +973,21 @@ edge_gateways (site_id, vertical_type, current_model_version, status, channel)
 platform_admins + break_glass_audit_log (acceso interno auditado, Sección 8.5)
 ```
 
-Extensiones de PostgreSQL requeridas antes de correr el DDL siguiente:
+Extensiones de PostgreSQL requeridas antes de correr el DDL siguiente. **Nota de
+portabilidad (v3.3):** `pgcrypto` y `citext` están disponibles en Supabase free
+tier, RDS y Postgres local por igual. `pg_partman` está disponible en Supabase (y
+en RDS/self-hosted); gestiona la creación y retención de particiones nativas — su
+uso concreto se documenta en la Sección 8.6. **Ya no se usa `timescaledb`**: fue
+deprecado para proyectos nuevos de Supabase (ver 8.6).
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- Gestión de particiones nativas (creación anticipada + retención). En Supabase
+-- vive en el esquema `partman`; en self-hosted se instala con el paquete
+-- contrib/partman. Ver Sección 8.6 para la configuración completa.
+CREATE SCHEMA IF NOT EXISTS partman;
+CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman;
 ```
 
 #### DDL Base (todas las tablas, orden de dependencia)
@@ -665,14 +1018,23 @@ CREATE TABLE tenants (
 CREATE INDEX idx_tenants_reseller_id ON tenants(reseller_id);
 
 CREATE TABLE partners (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
-    invited_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id          UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name               TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
+    -- Acceso por tiempo limitado (nuevo, v3.4 — Sección 3.1 decisión 3, Flujo 3).
+    -- NULL = acceso indefinido (default). Si se define, un job diario revoca el
+    -- Partner por el mismo camino del offboarding manual (Sección 12.12) cuando
+    -- access_expires_at < now() — no es mecanismo nuevo, solo un disparador distinto.
+    access_expires_at  TIMESTAMPTZ NULL,
+    invited_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_partners_tenant_id ON partners(tenant_id);
+-- Índice parcial: el job diario de expiración solo escanea partners activos con
+-- fecha de expiración fijada — evita un seq-scan sobre toda la tabla.
+CREATE INDEX idx_partners_access_expiry ON partners(access_expires_at)
+  WHERE status = 'active' AND access_expires_at IS NOT NULL;
 
 -- ============================================================
 -- Nivel 2-3: Sites → Cameras (jerarquía de infraestructura física)
@@ -731,8 +1093,14 @@ CREATE INDEX idx_zones_owner_partner ON zones(owner_partner_id);
 
 ```sql
 -- ============================================================
--- Time-Series: tracking_coordinates (hypertable) y agregados batch
+-- Time-Series: tracking_coordinates (particionada nativa) y agregados batch
 -- ============================================================
+-- v3.3: se reemplaza la hypertable de TimescaleDB por particionamiento declarativo
+-- nativo de PostgreSQL (RANGE por "time"), gestionado por pg_partman. La clave de
+-- partición ("time") ya forma parte de la PK, requisito de Postgres para tablas
+-- particionadas. La configuración de pg_partman (create_parent + retención) vive en
+-- la Sección 8.6. Ver esa sección para la justificación completa y la mitigación de
+-- la pérdida de compresión columnar.
 CREATE TABLE tracking_coordinates (
     "time"     TIMESTAMPTZ NOT NULL,
     camera_id  UUID NOT NULL REFERENCES cameras(id) ON DELETE CASCADE,
@@ -740,9 +1108,12 @@ CREATE TABLE tracking_coordinates (
     x          INTEGER NOT NULL,
     y          INTEGER NOT NULL,
     PRIMARY KEY (camera_id, "time", person_id)
-);
-SELECT create_hypertable('tracking_coordinates', 'time');
+) PARTITION BY RANGE ("time");
+-- Índice sobre la tabla particionada: Postgres lo propaga a cada partición.
 CREATE INDEX idx_tracking_camera_time ON tracking_coordinates(camera_id, "time" DESC);
+-- Nota: create_parent de pg_partman crea una partición DEFAULT y las particiones
+-- del rango inicial; ver Sección 8.6. En un entorno sin pg_partman, crear al menos
+-- una partición explícita antes de insertar (ej. la del mes corriente).
 
 -- Salida batch del Motor Matemático (Sección 6) — Dwell Time real por zona
 CREATE TABLE zone_dwell_sessions (
@@ -1049,9 +1420,202 @@ la rama TENANT se restringe adicionalmente vía la cadena `zones.camera_id →
 cameras.site_id = ANY (app_current_site_ids())` cuando `app_current_role() IN
 ('operator','viewer')` — mismo patrón de la política de `tracking_coordinates`.
 
-La misma política aplica (con el mismo patrón) a `sites`, `cameras` y `zones` como
-tablas — se omiten aquí por brevedad, pero siguen exactamente esta lógica de ramas
-OR, incluida la rama de "zonas cedidas siguen visibles para el tenant dueño".
+**RLS completo de las ocho tablas restantes (escrito y validado por ejecución en
+v3.3).** Versiones anteriores decían "la misma política aplica a `sites`, `cameras`
+y `zones`... se omiten por brevedad" — pero nunca se escribieron, y faltaban por
+completo `users`, `partners`, `tenants`, `resellers` y `user_site_assignments`. Una
+tabla sin `ENABLE/FORCE ROW LEVEL SECURITY` y sin políticas es una fuga: cualquier
+rol de aplicación la lee entera. A continuación el DDL real de las ocho, validado
+por ejecución contra PostgreSQL 16.
+
+**Pitfall resuelto — recursión mutua entre políticas.** Si la política de `sites`
+subconsulta `zones` y la de `zones` subconsulta `sites`/`cameras`, Postgres entra en
+`infinite recursion detected in policy` al evaluar RLS anidado. La solución
+idiomática (y la que usa Supabase) es encapsular las verificaciones de *pertenencia*
+en funciones `SECURITY DEFINER` cuyo dueño tiene `BYPASSRLS` (el rol `postgres` en
+Supabase/self-hosted): la consulta interna de la función no re-dispara RLS, cortando
+el ciclo. Estas funciones devuelven solo booleanos/escalares — nunca filas — por lo
+que no filtran datos entre contextos. Se marcan `STABLE SECURITY DEFINER` con
+`SET search_path = public` (no `LEAKPROOF`: leen tablas; ese requisito aplica solo a
+los helpers de GUC de 8.2).
+
+```sql
+-- Tres GUCs de contexto adicionales que necesita el RLS de gestión.
+CREATE OR REPLACE FUNCTION app_current_reseller_id() RETURNS UUID
+LANGUAGE sql STABLE LEAKPROOF PARALLEL SAFE AS $$
+  SELECT NULLIF(current_setting('app.current_reseller_id', true), '')::UUID $$;
+CREATE OR REPLACE FUNCTION app_current_user_id() RETURNS UUID
+LANGUAGE sql STABLE LEAKPROOF PARALLEL SAFE AS $$
+  SELECT NULLIF(current_setting('app.current_user_id', true), '')::UUID $$;
+-- Contexto de aprovisionamiento SuperAdmin (onboarding): tenant objetivo fijado por
+-- el backend interno tras validar identidad SuperAdmin.
+CREATE OR REPLACE FUNCTION app_provision_tenant_id() RETURNS UUID
+LANGUAGE sql STABLE LEAKPROOF PARALLEL SAFE AS $$
+  SELECT NULLIF(current_setting('app.provision_tenant_id', true), '')::UUID $$;
+
+-- Helpers de PERTENENCIA (SECURITY DEFINER; rompen la recursión mutua).
+CREATE OR REPLACE FUNCTION sec_tenant_owns_site(p_site UUID, p_tenant UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM sites s WHERE s.id = p_site AND s.tenant_id = p_tenant) $$;
+CREATE OR REPLACE FUNCTION sec_tenant_owns_camera(p_cam UUID, p_tenant UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM cameras c JOIN sites s ON s.id = c.site_id
+                 WHERE c.id = p_cam AND s.tenant_id = p_tenant) $$;
+CREATE OR REPLACE FUNCTION sec_partner_has_zone_on_site(p_site UUID, p_partner UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM zones z JOIN cameras c ON c.id = z.camera_id
+                 WHERE c.site_id = p_site
+                   AND z.owner_type = 'PARTNER' AND z.owner_partner_id = p_partner) $$;
+CREATE OR REPLACE FUNCTION sec_partner_has_zone_on_camera(p_cam UUID, p_partner UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM zones z WHERE z.camera_id = p_cam
+                   AND z.owner_type = 'PARTNER' AND z.owner_partner_id = p_partner) $$;
+CREATE OR REPLACE FUNCTION sec_partner_tenant(p_partner UUID)
+RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT p.tenant_id FROM partners p WHERE p.id = p_partner $$;
+CREATE OR REPLACE FUNCTION sec_partner_belongs_to_tenant(p_partner UUID, p_tenant UUID)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM partners p WHERE p.id = p_partner AND p.tenant_id = p_tenant) $$;
+
+-- ---------- resellers ----------
+ALTER TABLE resellers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE resellers FORCE ROW LEVEL SECURITY;
+CREATE POLICY resellers_read ON resellers
+FOR SELECT USING ( id = app_current_reseller_id() );
+
+-- ---------- tenants ----------
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenants FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenants_read ON tenants
+FOR SELECT USING (
+  ( app_current_partner_id() IS NULL AND app_current_reseller_id() IS NULL
+      AND tenants.id = app_current_tenant_id() )
+  OR ( app_current_partner_id() IS NOT NULL
+      AND sec_partner_belongs_to_tenant(app_current_partner_id(), tenants.id) )
+  OR ( app_current_reseller_id() IS NOT NULL
+      AND tenants.reseller_id = app_current_reseller_id() )  -- metadata de gestión, Sección 4
+);
+
+-- ---------- partners ----------
+ALTER TABLE partners ENABLE ROW LEVEL SECURITY;
+ALTER TABLE partners FORCE ROW LEVEL SECURITY;
+CREATE POLICY partners_read ON partners
+FOR SELECT USING (
+  ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+      AND partners.tenant_id = app_current_tenant_id() )
+  OR ( partners.id = app_current_partner_id() )
+);
+CREATE POLICY partners_write ON partners
+FOR INSERT WITH CHECK ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+  AND partners.tenant_id = app_current_tenant_id() );
+CREATE POLICY partners_update ON partners
+FOR UPDATE USING ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+  AND partners.tenant_id = app_current_tenant_id() );
+
+-- ---------- sites ----------
+ALTER TABLE sites ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sites FORCE ROW LEVEL SECURITY;
+CREATE POLICY sites_read ON sites
+FOR SELECT USING (
+  ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+      AND sites.tenant_id = app_current_tenant_id() )
+  OR ( app_current_partner_id() IS NULL AND app_current_role() IN ('operator','viewer')
+      AND sites.id = ANY (app_current_site_ids()) )
+  OR ( app_current_partner_id() IS NOT NULL
+      AND sec_partner_has_zone_on_site(sites.id, app_current_partner_id()) )
+);
+CREATE POLICY sites_provision ON sites
+FOR INSERT WITH CHECK ( sites.tenant_id = app_provision_tenant_id() );
+
+-- ---------- cameras ----------
+ALTER TABLE cameras ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cameras FORCE ROW LEVEL SECURITY;
+CREATE POLICY cameras_read ON cameras
+FOR SELECT USING (
+  ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+      AND sec_tenant_owns_camera(cameras.id, app_current_tenant_id()) )
+  OR ( app_current_partner_id() IS NULL AND app_current_role() IN ('operator','viewer')
+      AND cameras.site_id = ANY (app_current_site_ids()) )
+  OR ( app_current_partner_id() IS NOT NULL
+      AND sec_partner_has_zone_on_camera(cameras.id, app_current_partner_id()) )
+);
+CREATE POLICY cameras_provision ON cameras
+FOR INSERT WITH CHECK ( sec_tenant_owns_site(cameras.site_id, app_provision_tenant_id()) );
+
+-- ---------- zones ----------
+ALTER TABLE zones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE zones FORCE ROW LEVEL SECURITY;
+CREATE POLICY zones_read ON zones
+FOR SELECT USING (
+  ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+      AND (
+        (zones.owner_type = 'TENANT' AND zones.owner_tenant_id = app_current_tenant_id())
+        OR (zones.owner_type = 'PARTNER'
+             AND sec_partner_belongs_to_tenant(zones.owner_partner_id, app_current_tenant_id()))
+      ) )
+  OR ( app_current_partner_id() IS NULL AND app_current_role() IN ('operator','viewer')
+      AND EXISTS (SELECT 1 FROM cameras c WHERE c.id = zones.camera_id
+                    AND c.site_id = ANY (app_current_site_ids())) )
+  OR ( zones.owner_type = 'PARTNER' AND zones.owner_partner_id = app_current_partner_id() )
+);
+-- Reasignación de owner (Módulo de Reventa, Flujo 3): Tenant Admin del tenant dueño.
+CREATE POLICY zones_update ON zones
+FOR UPDATE USING ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+  AND sec_tenant_owns_camera(zones.camera_id, app_current_tenant_id()) );
+CREATE POLICY zones_provision ON zones
+FOR INSERT WITH CHECK ( sec_tenant_owns_camera(zones.camera_id, app_provision_tenant_id()) );
+
+-- ---------- users ----------
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+CREATE POLICY users_read ON users
+FOR SELECT USING (
+  ( users.id = app_current_user_id() )                                  -- perfil propio
+  OR ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+      AND users.tenant_id = app_current_tenant_id() )                   -- tenant admin
+  OR ( app_current_partner_id() IS NOT NULL AND app_current_role() = 'admin'
+      AND users.partner_id = app_current_partner_id() )                 -- partner admin
+  OR ( app_current_reseller_id() IS NOT NULL
+      AND users.reseller_id = app_current_reseller_id() )               -- reseller admin
+);
+CREATE POLICY users_write ON users
+FOR INSERT WITH CHECK ( app_current_role() = 'admin' AND (
+    ( app_current_partner_id() IS NULL AND users.tenant_id = app_current_tenant_id() )
+    OR ( app_current_partner_id() IS NOT NULL AND users.partner_id = app_current_partner_id() )
+) );
+
+-- ---------- user_site_assignments ----------
+ALTER TABLE user_site_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_site_assignments FORCE ROW LEVEL SECURITY;
+CREATE POLICY usa_read ON user_site_assignments
+FOR SELECT USING (
+  ( user_site_assignments.user_id = app_current_user_id() )
+  OR ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+      AND sec_tenant_owns_site(user_site_assignments.site_id, app_current_tenant_id()) )
+);
+CREATE POLICY usa_write ON user_site_assignments
+FOR INSERT WITH CHECK ( app_current_partner_id() IS NULL AND app_current_role() = 'admin'
+  AND sec_tenant_owns_site(user_site_assignments.site_id, app_current_tenant_id()) );
+```
+
+> **Nota sobre dos caminos de escritura (deliberado).** Las altas que hace el
+> **Tenant Admin** desde el backoffice (partners, usuarios, reasignación de owner de
+> zonas, asignaciones a sucursales) pasan por RLS con `WITH CHECK` acotado al tenant
+> de la sesión — el mismo principio de defensa en profundidad del resto del sistema.
+> Las altas de **onboarding del SuperAdmin** (crear el tenant, sus sedes y cámaras)
+> usan el contexto de aprovisionamiento `app.provision_tenant_id`, que el backend
+> interno solo fija tras validar identidad SuperAdmin — nunca expuesto a un rol de
+> tenant/partner. La creación del propio `resellers` y del primer `tenant` es una
+> operación de plataforma que corre por el canal interno (rol con `BYPASSRLS`),
+> igual que el acceso a `platform_admins`/`break_glass_audit_log` de la Sección 8.5.
+
+**Validación por ejecución (v3.3).** El DDL anterior se corrió contra PostgreSQL 16
+con un rol de aplicación no-superusuario, confirmando: tenant admin ve sus 2 sedes,
+1 partner y 2 zonas (propia + cedida); Partner ve exactamente su zona (1), la sede
+donde la tiene (1), su tenant padre (1) y **cero** partners ajenos; operator acotado
+a Zona 10 ve esa cámara pero **cero** cámaras de Zona 4; reseller ve solo el tenant
+de su cartera; y las políticas de `tracking_coordinates`/`zone_dwell_sessions` de
+v3.2 siguen funcionando sin recursión al activar RLS sobre `sites`/`cameras`/`zones`.
 
 **Política de escritura para el pipeline de ingesta (corrección v3.2):** las
 políticas anteriores son `FOR SELECT`. Con `FORCE ROW LEVEL SECURITY`, una tabla
@@ -1081,9 +1645,29 @@ WITH CHECK (
 Esto cierra un vector real: un Edge Gateway comprometido (está físicamente en la
 sede del cliente) no puede inyectar telemetría hacia cámaras de otra sede u otro
 tenant aunque falsifique `camera_id` en el payload — la política lo rechaza a nivel
-de base de datos. El Motor Matemático (batch) escribe `zone_dwell_sessions` bajo un
-rol de servicio con su propia política `FOR INSERT` equivalente (scoped por la
-cadena `zone → camera → site` del lote en proceso).
+de base de datos.
+
+**Política de INSERT para `zone_dwell_sessions` (corrección v3.3, antes ausente):**
+la versión anterior *mencionaba* que el Motor Matemático escribía "con su propia
+política `FOR INSERT` equivalente", pero nunca se escribió — y con `FORCE ROW LEVEL
+SECURITY` eso significa que el Motor Matemático **no podía insertar ni una fila**.
+El Motor corre bajo contexto de servicio con `app.motor_site_id` fijado al `site`
+del lote en proceso, y la política verifica la cadena `zone → camera → site`:
+
+```sql
+CREATE OR REPLACE FUNCTION app_motor_site_id() RETURNS UUID
+LANGUAGE sql STABLE LEAKPROOF PARALLEL SAFE AS $$
+  SELECT NULLIF(current_setting('app.motor_site_id', true), '')::UUID $$;
+
+CREATE POLICY zone_dwell_sessions_ingest ON zone_dwell_sessions
+FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM zones z JOIN cameras c ON c.id = z.camera_id
+          WHERE z.id = zone_dwell_sessions.zone_id AND c.site_id = app_motor_site_id())
+);
+```
+
+Validado por ejecución: el Motor inserta con `motor_site_id` correcto y es
+rechazado con un `site` ajeno.
 
 **Alcance de Partner a nivel de sucursal completa:** como `zones.owner_partner_id`
 se asigna por zona individual, para "asignarle una sucursal completa a una marca" el
@@ -1094,21 +1678,35 @@ scope.
 
 ---
 
-#### 8.4 Gestión de Ambientes (Dev/QA/Staging/Prod)
+#### 8.4 Gestión de Ambientes (Dev/QA/Staging/Prod — arquitectura completa;
+Dev+Prod para el MLP)
 
-**Separación por ambiente — instancias, no solo esquemas:**
+> **MLP (v3.4 — Sección 3.1, decisión 4):** para el lanzamiento se usan únicamente
+> **Dev + Prod**, con la **suite pgTAP completa (Sección 8.4 abajo) como gate
+> obligatorio** de toda promoción Dev→Prod — el pipeline de migraciones descrito
+> más abajo (levantar instancia efímera, correr migraciones, correr pgTAP,
+> verificar reversibilidad) no se recorta, solo se recorta el *número de
+> ambientes intermedios* entre Dev y Prod. **Gancho de activación:** QA/Staging
+> (la tabla completa de abajo) se agregan como nodos adicionales al mismo pipeline
+> cuando el volumen de clientes lo justifique — no es un rediseño del pipeline de
+> CI, es insertar un ambiente más en la misma cadena de promoción.
+
+**Separación por ambiente — instancias, no solo esquemas (arquitectura completa):**
 
 | Ambiente | Aislamiento recomendado | Justificación |
 | --- | --- | --- |
 | **Dev (local)** | Contenedor Docker efímero, un solo esquema | Ciclo de vida de minutos; no vale la pena una instancia completa. |
-| **QA** | Instancia/proyecto Postgres separado | Corre la suite de aislamiento (pgTAP) contra un clon real de la topología de extensiones (Timescale, RLS) sin compartir recursos con Staging. |
-| **Staging** | Instancia/proyecto Postgres separado, con IaC idéntico a Prod | Debe ser un espejo fiel de Prod (misma versión de Postgres/Timescale, mismas políticas RLS) — es el último gate antes de producción. |
+| **QA** *(post-MLP)* | Instancia/proyecto Postgres separado | Corre la suite de aislamiento (pgTAP) contra un clon real de la topología de extensiones (`pg_partman`, `pgcrypto`, `citext`, RLS) sin compartir recursos con Staging. |
+| **Staging** *(post-MLP)* | Instancia/proyecto Postgres separado, con IaC idéntico a Prod | Debe ser un espejo fiel de Prod (misma versión de Postgres, mismas extensiones, mismas políticas RLS y misma configuración de particionamiento) — es el último gate antes de producción. |
 | **Prod** | Instancia dedicada, backups PITR | — |
 
 Se descarta la separación por esquema-único-compartido entre QA/Staging/Prod: el
 riesgo de una política RLS mal aplicada en un ambiente "de prueba" que en realidad
 comparte el mismo clúster que producción no vale el ahorro de costo, dado que la
-sensibilidad del dato (rastreo de personas) es alta.
+sensibilidad del dato (rastreo de personas) es alta. **Esto aplica igual en el MLP
+recortado:** Dev y Prod nunca comparten clúster, aunque no exista un QA/Staging
+intermedio — el ahorro operativo del MLP es en número de ambientes, no en el
+principio de aislamiento físico entre pruebas y producción.
 
 **Datos sintéticos para QA/Staging (no solo `tracking_coordinates`):**
 
@@ -1253,14 +1851,81 @@ SELECT * FROM finish();
 ROLLBACK;
 ```
 
+```sql
+-- tests/isolation/05_partner_can_write_finding.sql
+-- (Nuevo en v3.3 — protege el fix de agent_findings_write: un subagente en sesión
+--  de Partner DEBE poder escribir un hallazgo; antes fallaba silenciosamente.)
+BEGIN;
+SELECT plan(2);
+
+SET LOCAL app.current_tenant_id  = '';
+SET LOCAL app.current_partner_id = '00000000-0000-4000-8000-0000000000d1';
+SET LOCAL app.current_actor_role = 'viewer';
+
+-- 1) INSERT en contexto Partner: no debe lanzar excepción de RLS.
+SELECT lives_ok($$
+  INSERT INTO agent_findings (tenant_id, partner_id, site_id, task_type, summary, detail, run_id)
+  VALUES ('00000000-0000-4000-8000-0000000000a1',
+          '00000000-0000-4000-8000-0000000000d1',
+          '00000000-0000-4000-8000-0000000000b1',
+          'stock_audit', 'quiebre góndola lácteos', '{}'::jsonb, gen_random_uuid())
+$$, 'Subagente en sesión de Partner puede escribir un hallazgo de su propio partner');
+
+-- 2) Escribir un hallazgo atribuido a OTRO tenant debe ser rechazado por RLS.
+SELECT throws_ok($$
+  INSERT INTO agent_findings (tenant_id, partner_id, task_type, summary, detail, run_id)
+  VALUES ('00000000-0000-4000-8000-0000000000a2',
+          '00000000-0000-4000-8000-0000000000d1',
+          'stock_audit', 'x', '{}'::jsonb, gen_random_uuid())
+$$, '42501', 'Un Partner no puede escribir hallazgos atribuidos a otro tenant');
+
+SELECT * FROM finish();
+ROLLBACK;
+```
+
+```sql
+-- tests/isolation/06_management_tables_isolation.sql
+-- (Nuevo en v3.3 — cubre el RLS de las tablas de gestión recién escrito.)
+BEGIN;
+SELECT plan(3);
+
+-- Partner no ve partners ajenos de su mismo tenant.
+SET LOCAL app.current_tenant_id = '';
+SET LOCAL app.current_partner_id = '00000000-0000-4000-8000-0000000000d1';
+SET LOCAL app.current_actor_role = 'viewer';
+SELECT is(
+  (SELECT count(*) FROM partners WHERE id <> '00000000-0000-4000-8000-0000000000d1')::int,
+  0, 'Un Partner nunca ve la existencia de otros Partners del mismo tenant');
+
+-- Operator acotado a Zona 10 no ve cámaras de Zona 4.
+SET LOCAL app.current_tenant_id = '00000000-0000-4000-8000-0000000000a1';
+SET LOCAL app.current_partner_id = '';
+SET LOCAL app.current_actor_role = 'operator';
+SET LOCAL app.current_user_site_ids = '00000000-0000-4000-8000-0000000000b2';
+SELECT is(
+  (SELECT count(*) FROM cameras)::int, 0,
+  'Operator asignado a Zona 4 no ve cámaras (que están en Zona 10)');
+
+-- agent_run_metrics: tabla interna, cero filas para cualquier rol de aplicación.
+SET LOCAL app.current_tenant_id = '00000000-0000-4000-8000-0000000000a1';
+SET LOCAL app.current_actor_role = 'admin';
+SELECT is(
+  (SELECT count(*) FROM agent_run_metrics)::int, 0,
+  'agent_run_metrics es interna: deny-by-default para todo rol de aplicación');
+
+SELECT * FROM finish();
+ROLLBACK;
+```
+
 **Pipeline de migraciones con rollback:** cada cambio de esquema/política vive como
 un par de archivos versionados `NNN_descripcion.up.sql` / `NNN_descripcion.down.sql`
 (herramienta agnóstica — Sqitch, Flyway o `node-pg-migrate` funcionan igual de bien
 sobre este patrón). El pipeline de CI, en orden:
 
-1. Levanta una instancia Postgres+Timescale efímera.
+1. Levanta una instancia Postgres efímera con las extensiones del proyecto
+   (`pg_partman`, `pgcrypto`, `citext`) — la misma topología de Supabase.
 2. Corre todas las migraciones `up` en orden.
-3. Corre la suite pgTAP completa (los cuatro tests de arriba y sus variantes) — si
+3. Corre la suite pgTAP completa (los seis tests de arriba y sus variantes) — si
    falla cualquiera, el pipeline se detiene, **no se promueve el ambiente**.
 4. Como prueba de reversibilidad real (no solo un archivo `down.sql` de adorno):
    aplica la última migración, la revierte (`down`), y la vuelve a aplicar (`up`) —
@@ -1278,8 +1943,9 @@ sobre este patrón). El pipeline de CI, en orden:
 fracción representativa de Prod (mismo tipo de instancia, menor capacidad), sometida
 a carga sintética con `k6` o `Locust` apuntando a `POST /v1/telemetry/ingest`
 simulando el volumen esperado (N Edge Gateways × M eventos/segundo cada uno), y
-validando que la política de `retention`/`compression` de TimescaleDB (Sección 8.5)
-no degrade la latencia de las vistas agregadas de 8.1 a medida que crece el
+validando que el particionamiento nativo + retención de `pg_partman` y el job de
+tiering a Glacier (Sección 8.6) no degraden la latencia de las vistas agregadas de
+8.1 a medida que crece el
 histórico.
 
 **Ambiente piloto para cambios de configuración del Edge (`bytetrack.yaml`):** los
@@ -1359,32 +2025,12 @@ aplicativo falle, el permiso muere solo). Las tablas `platform_admins` y
 política de lectura para roles de aplicación — solo el rol interno de la plataforma
 las consulta; un tenant o partner jamás puede enumerar sesiones de soporte.
 
-**Retención y purga de `tracking_coordinates`:** implementa técnicamente la política
-de negocio ya definida en la Sección 10.2 (13 meses para telemetría analítica,
-30 días para snapshots en S3):
-
-```sql
-SELECT add_retention_policy('tracking_coordinates', INTERVAL '13 months');
--- La purga de snapshots en S3 se gestiona vía lifecycle policy del bucket, no en SQL.
-
--- Compresión columnar (nuevo, v3.2): la telemetría con más de 7 días se comprime.
--- TimescaleDB reporta ratios típicos de >90% en series de tiempo de este perfil
--- (columnas repetitivas: camera_id, person_id incremental, coordenadas acotadas).
--- Esta es la palanca principal que mantiene el costo de almacenamiento dentro del
--- rango de $15-27/sede/mes de la Sección 10.1 con 13 meses de retención.
--- Nota de compatibilidad: segmentar por la columna de mayor cardinalidad de acceso.
-ALTER TABLE tracking_coordinates SET (
-  timescaledb.compress,
-  timescaledb.compress_segmentby = 'camera_id',
-  timescaledb.compress_orderby   = '"time" DESC'
-);
-SELECT add_compression_policy('tracking_coordinates', INTERVAL '7 days');
-```
-
-La compresión no altera el RLS: las políticas se evalúan igual sobre chunks
-comprimidos, y la suite pgTAP de la Sección 8.4 corre también contra datos ya
-comprimidos en el ambiente de pruebas de carga (donde la política de compresión
-está activa) para verificar que no exista divergencia de comportamiento.
+**Retención y purga de `tracking_coordinates`:** la política de negocio (13 meses
+para telemetría analítica, 30 días para snapshots en S3, Sección 10.2) se implementa
+técnicamente sobre particionamiento nativo + `pg_partman` — el DDL completo, la
+justificación del cambio desde TimescaleDB y la mitigación de la pérdida de
+compresión columnar están en la **Sección 8.6**. La purga de snapshots en S3 se
+gestiona vía lifecycle policy del bucket, no en SQL.
 
 **Backup/DR con verificación de RLS post-restore:** los backups (PITR del proveedor
 gestionado) capturan el estado del esquema, incluyendo las políticas RLS. El riesgo
@@ -1430,6 +2076,235 @@ sola:
 
 ---
 
+#### 8.6 Capa Time-Series sobre Postgres Nativo + pg_partman (reescrita v3.3)
+
+**Decisión bloqueante de portabilidad.** Versiones anteriores de este documento
+construían `tracking_coordinates` como una *hypertable* de TimescaleDB. Verificado
+contra la documentación oficial de Supabase (2026-07): **TimescaleDB está deprecado
+para proyectos nuevos de Supabase** — solo sigue disponible en proyectos antiguos
+creados sobre PostgreSQL 15, y con soporte hasta ~mayo 2026; los proyectos nuevos
+(PostgreSQL 17) no lo ofrecen. Como el destino de hosting de bajo costo y el
+fallback del proyecto es Supabase free tier — y como el mismo esquema debe correr
+idéntico en Supabase, RDS y el Postgres local de la computadora de respaldo (esto es
+una decisión de **portabilidad**, no solo de costo) — la capa time-series se
+rediseña sobre **particionamiento declarativo nativo de PostgreSQL + `pg_partman`**,
+que usa solo lo que las tres plataformas ofrecen.
+
+**Modelo de particionamiento.** `tracking_coordinates` se declara
+`PARTITION BY RANGE ("time")` (DDL en 8.0). `pg_partman` automatiza lo que antes
+hacían `create_hypertable` + `add_retention_policy`: crea particiones futuras por
+anticipado y elimina las que exceden la retención. La configuración (validada contra
+la documentación de pg_partman 5.x):
+
+```sql
+-- create_parent: crea la partición DEFAULT y las particiones del rango inicial,
+-- y registra la tabla en partman.part_config para mantenimiento automático.
+SELECT partman.create_parent(
+  p_parent_table := 'public.tracking_coordinates',
+  p_control      := 'time',
+  p_interval     := '1 month',   -- una partición por mes
+  p_premake      := 3            -- mantener 3 meses futuros creados por adelantado
+);
+
+-- Retención: 13 meses (equivale a add_retention_policy). retention_keep_table=false
+-- hace DROP de la partición vencida en vez de solo desadjuntarla.
+UPDATE partman.part_config
+   SET retention = '13 months',
+       retention_keep_table = false,
+       infinite_time_partitions = true
+ WHERE parent_table = 'public.tracking_coordinates';
+
+-- El mantenimiento (crear futuras, purgar vencidas) lo dispara run_maintenance_proc.
+-- En Supabase/self-hosted se agenda con pg_cron (disponible en Supabase); en RDS,
+-- con un event scheduler externo. Cadencia diaria es suficiente para particiones
+-- mensuales.
+-- SELECT cron.schedule('partman-maintenance', '0 3 * * *',
+--   $$CALL partman.run_maintenance_proc()$$);
+```
+
+**Pérdida explícita: compresión columnar automática.** TimescaleDB comprimía chunks
+antiguos (>90% típico en este perfil de datos) y esa era, en v3.2, la palanca que
+mantenía el almacenamiento dentro del rango de $15-27/sede/mes de la Sección 10.1.
+Postgres nativo **no tiene un equivalente directo** a esa compresión columnar por
+chunk. Mitigaciones, en orden de preferencia (ninguna toca RLS ni aislamiento):
+
+1. **Compresión TOAST + tipos ajustados (gratis, primera línea).** `x`/`y` como
+   `INTEGER` ya son compactos; `person_id` es el mayor consumidor. Donde el pipeline
+   lo permita, migrar `person_id` a un entero por-cámara reduce fila y peso de
+   índice. TOAST comprime valores grandes automáticamente. Recorte esperado modesto
+   pero sin trabajo operativo.
+2. **`pg_squeeze` en las particiones frías (disponible en self-hosted/RDS; en
+   Supabase depende del plan).** Reorganiza y compacta particiones cerradas
+   (>1 mes) sin bloqueo largo. No alcanza el ratio de Timescale, pero recupera
+   bloat y mejora densidad.
+3. **Tiering a S3 Glacier para el histórico >3 meses (la mitigación de costo
+   real).** Como cada partición mensual es una tabla independiente, se puede
+   `DETACH PARTITION` la de >3 meses, exportarla comprimida (`COPY ... TO PROGRAM
+   'zstd'`) a S3 Glacier, y hacer `DROP`. El histórico interanual (para comparativos
+   año contra año, Sección 10.2) se rehidrata bajo demanda — es lectura rara y no
+   interactiva. Esto mueve el 80% del volumen (los meses fríos) a almacenamiento de
+   ~$0.004/GB, dejando en Postgres solo los ~3 meses calientes.
+4. **Particiones más pequeñas (semanales) si el patrón de acceso lo justifica** —
+   mejora la poda de particiones (partition pruning) en consultas por rango de
+   fechas, a costa de más objetos que gestionar.
+
+**Reevaluación del presupuesto de almacenamiento (Sección 10.1):** con el tiering a
+Glacier del punto 3, el costo de almacenamiento *caliente* en Postgres baja
+respecto al escenario Timescale-comprimido (menos datos residentes), mientras el
+histórico frío cuesta centavos. El rango de infraestructura de $15-27/sede/mes **se
+mantiene**; la diferencia es operativa (un job de tiering en vez de una política de
+compresión declarativa), no de orden de magnitud en costo. Se documenta como
+trade-off, no como amenaza al modelo financiero.
+
+**El RLS no cambia.** Las políticas de la Sección 8.3 se evalúan igual sobre una
+tabla particionada — Postgres aplica RLS a nivel de la tabla padre y lo propaga a
+todas las particiones. La suite pgTAP de la Sección 8.4 corre contra la tabla
+particionada (con al menos dos particiones pobladas) en el ambiente de pruebas de
+carga, para verificar que la poda de particiones no altere el comportamiento de
+aislamiento. La política de INSERT de ingesta (`tracking_coordinates_ingest`,
+Sección 8.3) también se propaga sin cambios.
+
+**Reconciliación de timestamps (Sección 9) intacta:** la inserción de telemetría
+con timestamp UTC antiguo (llegada tardía por sincronización offline) enruta
+automáticamente a la partición correcta por el valor de `"time"` — mismo
+comportamiento que ofrecía la hypertable, sin código adicional. Si la data llega
+tan tarde que su partición ya fue purgada por retención, el INSERT cae en la
+partición DEFAULT (creada por `create_parent`); un chequeo periódico de la partición
+DEFAULT no vacía alerta sobre data anómalamente tardía.
+
+---
+
+#### 8.7 Credenciales del Edge Gateway: MLP (Access + Refresh Token) y Fase 4+ (mTLS) —
+reestructurada v3.4 (Sección 3.1, decisión 5)
+
+Versiones anteriores (pre-v3.3) mencionaban "JWT/API Key" para la Service Account
+del Edge Gateway (Sección 4) sin especificar almacenamiento, rotación ni
+revocación — un gap de seguridad para un dispositivo que vive físicamente en la
+sede del cliente y es, por tanto, el punto más expuesto de la arquitectura. v3.3
+resolvió esto con una CA interna y certificados mTLS. La revisión de alcance del
+MLP confirmó que **mTLS es más PKI de la que el MLP necesita**: el mecanismo que
+sigue se construye una sola vez y cubre el MLP completo, con mTLS documentado como
+evolución para cuando un vertical o cliente lo exija contractualmente — no un
+prototipo a reemplazar después.
+
+##### 8.7.0 MLP: Autenticación por Access Token + Refresh Token
+
+**Mecanismo:** al canjear el código de activación de un solo uso (Flujo 1, paso 4,
+o Flujo 7 para reemplazo), el backend emite un **access token** (JWT firmado,
+stateless, 24h de vigencia, claims `edge_gateway_id`/`site_id`/`vertical_type`) y un
+**refresh token** (opaco, 90 días de vigencia, su hash — nunca el valor en claro —
+se persiste en `edge_gateways`). El Edge Gateway usa el access token para publicar
+telemetría y consultar el Model Registry; cuando expira o le quedan pocas horas,
+llama proactivamente a `POST /v1/edge/token/refresh` con el refresh token vigente
+para obtener un par nuevo.
+
+```sql
+ALTER TABLE edge_gateways
+  ADD COLUMN refresh_token_hash        TEXT,        -- hash (sha256), nunca el token en claro
+  ADD COLUMN refresh_token_expires_at  TIMESTAMPTZ,
+  ADD COLUMN last_token_refresh_at     TIMESTAMPTZ,
+  ADD COLUMN replaced_edge_gateway_id  TEXT NULL REFERENCES edge_gateways(id);
+
+-- Ampliación del enum de status para soportar baja/reemplazo (Flujo 7) — el mismo
+-- enum sirve tanto para MLP (refresh token) como para Fase 4+ (mTLS, 8.7.1).
+ALTER TABLE edge_gateways DROP CONSTRAINT IF EXISTS edge_gateways_status_check;
+ALTER TABLE edge_gateways ADD CONSTRAINT edge_gateways_status_check
+  CHECK (status IN ('online','offline','degraded','revoked','decommissioned'));
+
+CREATE UNIQUE INDEX idx_edge_gateways_refresh_hash ON edge_gateways(refresh_token_hash)
+  WHERE refresh_token_hash IS NOT NULL;
+```
+
+**Revocación real (Sección 3.1, decisión 5):** revocar un gateway es
+`UPDATE edge_gateways SET status = 'revoked' WHERE id = ...` — sin tocar
+certificados ni CRL. La query que ejecuta `POST /v1/edge/token/refresh` es la única
+puerta de revocación, y rota el refresh token en cada uso (previene el reuso de un
+refresh token robado):
+
+```sql
+UPDATE edge_gateways
+   SET refresh_token_hash = $nuevo_hash,
+       refresh_token_expires_at = now() + interval '90 days',
+       last_token_refresh_at = now()
+ WHERE id = $edge_gateway_id
+   AND refresh_token_hash = $hash_del_token_presentado
+   AND refresh_token_expires_at > now()
+   AND status NOT IN ('revoked', 'decommissioned')
+RETURNING id;
+```
+
+Si la query devuelve **cero filas** (token equivocado, expirado, o `status`
+revocado/decomisionado), el backend rechaza el refresh con un único mensaje
+genérico — no distingue la causa al cliente, para no filtrar cuál de las tres
+condiciones falló. **Ventana de exposición tras revocar: máximo 24h** — el access
+token vigente sigue funcionando hasta su propia expiración (es stateless, no se
+puede invalidar antes sin mantener una lista de revocación adicional, que es
+exactamente la complejidad que el MLP evita), pero el siguiente intento de refresh
+—a más tardar en 24h— falla y el gateway queda sin forma de renovar acceso.
+
+**Validado por ejecución (v3.4):** contra PostgreSQL 16, un gateway con
+`status='online'` y hash correcto refresca exitosamente (1 fila, hash rotado); el
+mismo intento con `status='revoked'` devuelve 0 filas aunque el hash y la
+expiración sean válidos; un hash incorrecto o una expiración vencida también
+devuelven 0 filas.
+
+**Reemplazo de hardware (Flujo 7):** el gateway nuevo obtiene su propio par
+access+refresh token al canjear el código de reemplazo; el gateway viejo pasa a
+`status='decommissioned'`, lo que por sí solo ya bloquea cualquier refresh futuro
+del hash viejo — no se requiere revocación de certificado porque no hay
+certificado.
+
+##### 8.7.1 Fase 4+: mTLS (gancho contractual, no descartado)
+
+El mecanismo de certificado cliente mTLS ya diseñado y validado en v3.3 permanece
+como la opción de mayor garantía para cuando un vertical o cliente lo exija
+contractualmente (ej. banca, Sección 3.1 decisión 6). Se activa **sin rediseño**:
+las columnas de abajo se agregan sobre el mismo `edge_gateways`, y el enum de
+`status` ya definido en 8.7.0 sirve para ambos mecanismos sin cambios.
+
+**Por qué mTLS es superior a un JWT de larga duración (motivo original, sigue
+vigente para el caso Fase 4+):** un JWT de larga duración almacenado en la sede es
+un secreto exfiltrable que sobrevive hasta su expiración. Un certificado cliente
+mTLS: (a) sobrevive reinicios sin flujo de refresh (vive en el volumen de Docker);
+(b) funciona idéntico en Windows/Linux/macOS; (c) permite revocación server-side
+inmediata contra el estado en DB, sin esperar expiración (cero ventana de
+exposición, vs. las ≤24h del mecanismo de refresh token del MLP); y (d) la clave
+privada nunca viaja por la red (se genera localmente; solo el CSR sale al canjear
+el código de activación).
+
+**Emisión:** al canjear el código de activación, el Edge Gateway genera su par de
+claves localmente y envía un CSR; el backend actúa como CA interna y emite el
+certificado cliente, registrando su serial y expiración:
+
+```sql
+ALTER TABLE edge_gateways
+  ADD COLUMN cert_serial     TEXT UNIQUE,
+  ADD COLUMN cert_expires_at TIMESTAMPTZ;
+```
+
+**Revocación contra estado en DB (no solo criptográfica):** en cada handshake mTLS,
+el backend valida el certificado criptográficamente **y además** consulta
+`edge_gateways.status` para ese `cert_serial`. Si `status IN ('revoked',
+'decommissioned')`, la conexión se rechaza aunque el certificado siga vigente —
+mismo enum, mismo principio de revocación real que 8.7.0, solo que sin ventana de
+exposición.
+
+**Rotación automática antes de expiración:** los certificados se emiten con
+vigencia acotada (ej. 90 días). El Edge Gateway llama proactivamente a un endpoint
+de renovación (`POST /v1/edge/cert/renew`, autenticado con el certificado aún
+vigente) cuando le quedan ~2 semanas — obtiene un certificado nuevo sin
+intervención manual y sin ventana de desconexión. Si el gateway estuvo offline y su
+certificado expiró, el flujo de renovación cae de vuelta al canje de un código de
+activación nuevo (misma mecánica de reemplazo del Flujo 7).
+
+**Nota de operación interna:** la CA interna y su clave privada son un activo de
+plataforma; viven en el mismo KMS que envuelve las DEKs de `cameras.rtsp_url`
+(Sección 8.5), nunca en el esquema ni en el código. La rotación de la CA raíz es un
+procedimiento documentado aparte (fuera del MLP, pero la arquitectura de emisión no
+lo impide).
+
+---
+
 ### 9. APIs, Sincronización y Solución Offline (Offline-Sync Resolution)
 
 El sistema de sedes es propenso a caídas de internet. El Edge Gateway nunca debe
@@ -1451,8 +2326,36 @@ actualizaciones en el backend rompan los Edge Gateways ya desplegados en campo,
   computadora del comercio se llene, SQLite tendrá un límite duro (ej. retención de
   7 días). Si se supera, se borrarán los registros más antiguos (FIFO).
 * **Reconciliación de Timestamps:** como el Timestamp se estampa en UTC en el
-  momento exacto de la inferencia local, TimescaleDB insertará la data antigua sin
-  afectar la integridad de los gráficos históricos en el dashboard.
+  momento exacto de la inferencia local, la tabla particionada enruta la data
+  antigua a la partición mensual correspondiente por el valor de `"time"` (Sección
+  8.6), sin afectar la integridad de los gráficos históricos en el dashboard.
+
+#### 9.1 Descargas OTA Resumibles y Expiración de URL Firmada (nueva, v3.3)
+
+El Model Manager del Edge Gateway (Secciones 5, 7, 7.1) descarga checkpoints `.pt`
+(6-13 MB, Sección 7.2) desde una URL firmada de S3 (`GET /v1/models/{vertical_type}/
+manifest` devuelve la URL, Sección 9 más abajo). Especificación de robustez:
+
+* **Reanudación por `Range` (sin trabajo de servidor):** las URLs firmadas de S3
+  soportan nativamente el header `Range`. El worker de descarga persiste el offset
+  de bytes recibidos en la cola local (SQLite) y, tras un corte, reanuda con
+  `Range: bytes=<offset>-` en vez de reiniciar — crítico en las conexiones
+  intermitentes típicas de las sedes de CENAM.
+* **TTL de la URL firmada: 1 hora.** Suficiente incluso para el peor caso de
+  descarga de 13 MB sobre un enlace lento; no se justifica un TTL mayor que
+  ampliaría la ventana de exposición de la URL.
+* **Manejo de expiración a mitad de descarga:** si la URL vence antes de completar
+  (respuesta `403` de S3 por firma expirada), el worker **no reintenta la URL
+  vencida** — vuelve a pedir el manifiesto (`GET /v1/models/{vertical_type}/
+  manifest`) para obtener una URL fresca, y reanuda desde el offset ya descargado
+  con `Range`. El reintento usa el **mismo backoff exponencial** de la cola de
+  telemetría (Sección 9, "Política de Reintentos"), por consistencia de patrón —
+  un solo mecanismo de backoff en todo el Edge Gateway.
+* **Integridad al final:** completada la descarga (nueva o reanudada), el Model
+  Manager valida el checksum SHA256 contra el del manifiesto **antes** de reemplazar
+  el checkpoint activo (patrón blue/green a nivel de modelo, Sección 7.1). Un
+  archivo reensamblado de fragmentos con un byte corrupto se detecta aquí y dispara
+  una descarga limpia desde cero.
 
 #### API Interna (Edge hacia Cloud)
 
@@ -1534,12 +2437,22 @@ ver abajo).
 
 **Costos comunes a ambos planes:**
 
-* **Infraestructura Cloud (AWS):** balanceo, backend, PostgreSQL/TimescaleDB
-  gestionado (con compresión columnar activa, Sección 8.5, que es lo que hace
-  sostenible la retención de 13 meses), Model Registry (S3 + tráfico de descarga de
-  checkpoints, infrecuente y de pocos MB): **~$15 - $27 USD / mes por sede**.
+* **Infraestructura Cloud (v3.4: Supabase + Render/Cloud Run + Cloudflare R2 para
+  el MLP; Sección 7/3.1 decisión 12):** balanceo, backend, PostgreSQL gestionado con
+  particionamiento nativo + `pg_partman` y tiering del histórico frío a Cloudflare
+  R2/Glacier equivalente (Sección 8.6, lo que hace sostenible la retención de 13
+  meses sin la compresión columnar de Timescale), Model Registry (object storage +
+  tráfico de descarga de checkpoints, infrecuente y de pocos MB): **~$15 - $27 USD
+  / mes por sede**. AWS/RDS quedan como ruta de escalamiento para Fase 4+.
 * **Ancho de Banda de Subida:** JSON en kilobytes + snapshots bajo demanda:
   **~$2 USD / mes por sede**.
+* **Motor de Acciones (Sección 12.10) — fuera del COGS:** Slack, Telegram y correo
+  tienen costo marginal cero y ya están incluidos en el rango de infraestructura de
+  arriba. **WhatsApp Business API es un add-on opt-in cuyo costo de Meta se
+  factura directamente al cliente como línea aparte** — nunca se absorbe en el COGS
+  de la plataforma ni se mezcla con los rangos de este documento, precisamente para
+  que el pricing de los planes de abajo no dependa de cuántos clientes eligen
+  WhatsApp.
 
 **Plan Base (capa operativa + Copiloto conversacional):**
 
@@ -1639,7 +2552,7 @@ se documenta explícitamente a continuación.
 * **Encriptación en Tránsito:** todas las comunicaciones entre el Edge y la Nube, y
   entre el Edge Gateway y el Model Registry, utilizan cifrado seguro mediante
   TLS/HTTPS.
-* **Encriptación en Reposo:** las bases de datos cloud (PostgreSQL/TimescaleDB)
+* **Encriptación en Reposo:** las bases de datos cloud (PostgreSQL)
   operarán con *encryption at rest* nativo provisto por el cloud (ej. AWS RDS
   Encryption). El bucket S3 del Model Registry también opera con encryption at rest.
 * **Control de Acceso Basado en Roles (RBAC) con Aislamiento de Tres Niveles
@@ -1993,7 +2906,7 @@ agente individual con pasos.
 Los subagentes **no** devuelven telemetría cruda ni análisis extensos por el hilo
 de conversación al orquestador. El flujo es:
 
-1. Cada subagente escribe su resultado completo en Postgres/TimescaleDB mediante
+1. Cada subagente escribe su resultado completo en Postgres mediante
    una herramienta MCP de escritura (`write_finding`), que ejecuta el INSERT bajo
    el mismo contexto RLS de la sesión (Sección 12.2) — el subagente de un tenant
    no puede escribir hallazgos atribuidos a otro tenant ni leer los de un Partner
@@ -2041,13 +2954,31 @@ FOR SELECT USING (
 );
 
 -- Escritura: solo dentro del contexto activo de la sesión agéntica.
+-- Corrección v3.3: la versión anterior exigía SIEMPRE
+-- `agent_findings.tenant_id = app_current_tenant_id()`. Pero en una sesión de
+-- contexto PARTNER la convención (Sección 8.2 / test pgTAP 03) fija
+-- app.current_tenant_id = '' (→ NULL), por lo que la comparación nunca era cierta
+-- y un subagente en sesión de Partner NO PODÍA escribir un hallazgo. Se agrega la
+-- rama Partner, derivando el tenant_id del hallazgo del tenant padre del partner.
 CREATE POLICY agent_findings_write ON agent_findings
 FOR INSERT WITH CHECK (
-  agent_findings.tenant_id = app_current_tenant_id()
-  AND ( app_current_partner_id() IS NULL
-        OR agent_findings.partner_id = app_current_partner_id() )
+  -- Contexto tenant
+  ( app_current_partner_id() IS NULL
+      AND agent_findings.tenant_id = app_current_tenant_id() )
+  OR
+  -- Contexto partner: tenant_id derivado del padre, no de la GUC (que es NULL)
+  ( app_current_partner_id() IS NOT NULL
+      AND agent_findings.partner_id = app_current_partner_id()
+      AND agent_findings.tenant_id = sec_partner_tenant(app_current_partner_id()) )
 );
 ```
+
+**Validado por ejecución (v3.3):** un subagente en sesión de Partner (`current_
+partner_id = d1`, `current_tenant_id = ''`) ahora inserta correctamente un hallazgo
+atribuido a su partner y al tenant padre; e intentar escribir un hallazgo atribuido
+a *otro* tenant es rechazado por la política. El test pgTAP nuevo
+`05_partner_can_write_finding.sql` (Sección 8.4) ejecuta este INSERT y confirma que
+ya no falla.
 
 **Beneficio doble, medible:** (a) *tokens* — el hilo del orquestador transporta
 resúmenes de ~30 tokens en lugar de hallazgos de ~2-4K tokens; con 10-20
@@ -2099,7 +3030,28 @@ CREATE TABLE agent_run_metrics (
     ended_at            TIMESTAMPTZ
 );
 CREATE INDEX idx_arm_tenant_started ON agent_run_metrics(tenant_id, started_at DESC);
+
+-- RLS de agent_run_metrics (decisión explícita v3.3): tabla EXCLUSIVAMENTE interna,
+-- igual que platform_admins y break_glass_audit_log. FORCE RLS + SIN política de
+-- lectura para roles de aplicación (deny-by-default total). Un tenant/partner nunca
+-- consulta su propio consumo por esta tabla — las métricas por sesión/thread son
+-- información operativa de la plataforma, no del cliente. Si el negocio decide
+-- exponer COGS por sede al Asset Owner, se hará vía una VISTA AGREGADA separada
+-- (ej. tokens/mes por site, sin detalle por corrida) con su propio security_invoker
+-- y su propia política — no dando acceso directo a esta tabla.
+ALTER TABLE agent_run_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_run_metrics FORCE ROW LEVEL SECURITY;
+-- (Sin CREATE POLICY: solo el rol interno de la plataforma la consulta.)
 ```
+
+**Por qué interna y no visible al tenant (decisión, no omisión):** exponer
+`agent_run_metrics` directamente filtraría patrones de uso (a qué horas corre el
+enjambre, cuántos threads, cuántos errores) que son detalle de implementación de la
+plataforma, y crearía una segunda superficie a mantener bajo RLS sin valor para el
+cliente. El dato que *sí* podría querer un Asset Owner — su costo agregado — se sirve
+mejor por una vista de resumen con su propio contrato, dejando esta tabla como
+telemetría operativa pura. Validado por ejecución: con RLS forzado y sin política, un
+rol de aplicación obtiene cero filas.
 
 Con esto, operaciones puede responder "¿qué sede está fuera de presupuesto de
 tokens?", "¿qué proporción de corridas termina con hallazgos accionables?", "¿subió
@@ -2173,25 +3125,52 @@ head-to-head perdemos la demo. Especificación del **Motor de Acciones**:
 
 * **Reglas de acción (deterministas, base del MLP):** el Asset Owner (y cada
   Partner, dentro de su alcance) define reglas umbral sobre los agregados y sobre
-  `agent_findings`: "si la cola de cajas supera N personas por M minutos →
-  WhatsApp al gerente de turno"; "si el enjambre escribe un hallazgo
-  `action_required` de quiebre de stock en una zona de Nestlé → notificar al
-  contacto del Partner". Evaluadas por el Motor Matemático en su mismo ciclo batch
-  (1-5 min) — sin infraestructura nueva de streaming, coherente con la Sección 6.
-* **Canales del MLP:** WhatsApp Business API (canal dominante en CENAM — es el
-  canal, no el email), Slack (incoming webhooks) y correo. Roadmap: SMS y webhooks
+  `agent_findings`: "si la cola de cajas supera N personas por M minutos → alerta
+  al gerente de turno"; "si la auditoría visual de quiebre de stock (Copiloto,
+  Sección 12.4/12.5) escribe un hallazgo `action_required` en una zona de Nestlé →
+  notificar al contacto del Partner". Evaluadas por el Motor Matemático en su mismo
+  ciclo batch (1-5 min) — sin infraestructura nueva de streaming, coherente con la
+  Sección 6. **Para el MLP, `agent_findings` se alimenta de la auditoría vía
+  Messages API directa** (una fila por auditoría), no del Enjambre — mismo sumidero
+  de datos (Sección 12.7) que reutiliza sin cambios cuando el Enjambre se active en
+  Fase 4 y empiece a escribir muchas más filas por corrida.
+* **Canales del MLP (reordenado v3.4 — Sección 3.1, decisión 7):** **Slack
+  (incoming webhooks), Telegram (Bot API) y correo son el default, con costo
+  marginal cero.** **WhatsApp Business API es opt-in desde el día 1** si el cliente
+  lo prefiere (sigue siendo el canal de mayor adopción en CENAM) — pero su costo de
+  Meta se refleja **explícitamente en la factura del cliente como línea aparte**,
+  no se absorbe en el COGS de la plataforma (Sección 10.1). Roadmap: SMS y webhooks
   salientes genéricos para integración ERP (la actualización directa de ERP de
   terceros queda fuera del MLP; se expone el webhook firmado para que el cliente
   integre).
-* **Acciones originadas por el Enjambre (paridad "agéntica" real):** los agentes
-  no improvisan acciones — disponen de una herramienta MCP `trigger_action(rule_
-  template, target, payload)` cuyo catálogo está acotado por tenant/partner vía el
-  mismo scoping RLS de 12.2: un agente solo puede disparar acciones del catálogo
-  de su propio contexto, hacia destinatarios registrados por ese contexto. "Sin
-  humano en el loop" aplica a la *ejecución* (nadie aprueba cada alerta), no a la
-  *definición* (todo tipo de acción y destinatario fue configurado explícitamente
-  por un humano del tenant). Esto nos da el titular competitivo de Agrex — alertas
-  automáticas accionadas por IA — con una superficie de riesgo acotada y auditable.
+* **Plantillas de SOP de Compliance (nuevo, v3.4 — Sección 3.1, decisión 8):**
+  mismo motor de reglas-por-umbral de arriba, con plantillas pre-configuradas que
+  el Asset Owner activa por sede/zona sin escribir la regla desde cero:
+  * **Personal no presente en zona de caja** durante horario operativo (umbral: cero
+    detecciones en la zona `staff_area` de caja por más de N minutos en horario de
+    apertura).
+  * **Apertura/cierre fuera de horario** (primera/última detección de persona en la
+    sede fuera de la ventana configurada).
+  * **Cliente sin atender** (persona en zona de espera/caja por más de N minutos sin
+    que se registre personal en la zona adyacente).
+  No es una capacidad nueva del motor — son más filas de configuración de reglas
+  sobre la misma infraestructura de umbral y canal ya construida. Plantillas
+  adicionales por vertical (banca, logística) se agregan igual, sin tocar el motor.
+* **Acciones originadas por el Enjambre — Fase 4 (paridad "agéntica" real, se
+  activa junto con la Sección 12 completa):** los agentes no improvisan acciones —
+  disponen de una herramienta MCP `trigger_action(rule_template, target, payload)`
+  cuyo catálogo está acotado por tenant/partner vía el mismo scoping RLS de 12.2: un
+  agente solo puede disparar acciones del catálogo de su propio contexto, hacia
+  destinatarios registrados por ese contexto. "Sin humano en el loop" aplica a la
+  *ejecución* (nadie aprueba cada alerta), no a la *definición* (todo tipo de acción
+  y destinatario fue configurado explícitamente por un humano del tenant). Esto nos
+  da el titular competitivo de Agrex — alertas automáticas accionadas por IA — con
+  una superficie de riesgo acotada y auditable. **En el MLP, el mismo titular
+  competitivo ya se cumple sin esta pieza:** las reglas deterministas de arriba más
+  las plantillas de SOP producen exactamente el mismo tipo de alerta automática sin
+  humano en el loop de ejecución — la diferencia de Fase 4 es que el *disparo* de
+  la acción puede originarse en el razonamiento del agente, no solo en un umbral
+  numérico.
 * **Auditoría:** toda acción disparada se registra (regla/agente origen, contexto,
   canal, destinatario, timestamp, payload) en una tabla `action_log` bajo el mismo
   RLS — el Asset Owner audita todo lo suyo; cada Partner, lo propio.
@@ -2206,83 +3185,585 @@ programado) y este Motor de Acciones, la plataforma iguala las tres capacidades
 agénticas visibles de Agrex.ai, y las supera en el eje que ellos no tienen:
 la reventa B2B2B con aislamiento de tres niveles garantizado en la base de datos.
 
+#### 12.11 Alertas Escalonadas Antes de Pérdida de Datos Offline (nueva, v3.3)
+
+La cola local persistente del Edge Gateway (SQLite) descarta por FIFO tras un límite
+duro de retención (ej. 7 días, Sección 9). Si una sede queda sin internet varios
+días, el riesgo no es solo "gateway offline" — es **pérdida irrecuperable de
+telemetría** cuando la cola local se llena y empieza a evictar. Un aviso binario
+"offline/online" no comunica esa urgencia creciente. Especificación de alertas
+escalonadas, reutilizando la infraestructura existente:
+
+Un job programado (misma cadencia batch del Motor Matemático, Sección 6) compara
+`edge_gateways.last_heartbeat_at` contra umbrales graduados:
+
+| Umbral sin heartbeat | Acción | Canal |
+| --- | --- | --- |
+| **Día 1** | Aviso no bloqueante en el tablero del Asset Owner | UI |
+| **Día 3** | Correo al Asset Owner | Email |
+| **Día 5** | **Alerta urgente** vía el Motor de Acciones (12.10) | WhatsApp/Slack |
+
+La alerta del día 5 **no es una acción improvisada por un agente** — es una regla
+pre-configurada del catálogo del Motor de Acciones (12.10), disparada por el job de
+salud, no por el Enjambre. El mensaje debe indicar **explícitamente cuántos días
+quedan antes de la pérdida irrecuperable** por evicción FIFO: p.ej. "Sede La Torre
+Zona 10 sin conexión hace 5 días. La cola local retiene 7 días — se perderá
+telemetría de forma irrecuperable en ~2 días si no se restablece la conexión."
+Esto convierte un dato técnico (heartbeat viejo) en una acción clara para el
+personal de la sede, que es exactamente el patrón de valor del Motor de Acciones.
+
+La cadencia y los umbrales son configurables por tenant (una sede rural con
+conectividad intermitente conocida puede tolerar umbrales más laxos que una sucursal
+bancaria urbana). El job de salud ya existe en germen en la Sección 8.5
+("Salud del tracker y de la flota"); esta sección lo formaliza con la escalera de
+severidad y el puente al Motor de Acciones.
+
+#### 12.12 Offboarding de Partner y Derecho al Olvido sobre `agent_findings` (nueva, v3.3)
+
+Cuando un Asset Owner revoca a un Partner (`partners.status='revoked'`, Flujo 3),
+hay que distinguir dos cosas que versiones anteriores mezclaban:
+
+1. **Visibilidad del Asset Owner sobre los hallazgos del Partner revocado — ya
+   resuelta por diseño.** La política `agent_findings_read` (Sección 12.7) da al
+   Tenant Admin acceso a los hallazgos por `tenant_id`, sin importar el `partner_id`
+   ni el estado del Partner. Es decir: revocar a un Partner **no** hace desaparecer
+   los hallazgos históricos de la vista del Asset Owner — coherente con el mismo
+   principio del Flujo 3 (el Asset Owner conserva siempre visibilidad sobre lo que
+   ocurrió en su infraestructura). No se requiere ningún cambio para esto.
+
+2. **Purga por solicitud legal (derecho al olvido) — requiere acción explícita y
+   auditada.** Distinta del timer pasivo de retención de 13 meses (que sigue siendo
+   el comportamiento por defecto si nadie invoca borrado). Cuando un Partner ejerce
+   un derecho de supresión, se expone un endpoint dedicado y auditado:
+
+   **`DELETE /v1/tenants/{tenant_id}/partners/{partner_id}/data`** — solo invocable
+   por un Tenant Admin autenticado del `tenant_id` dueño (validación de la cadena
+   `partner → tenant`), registrado como evento de seguridad. Purga:
+   * las filas de `agent_findings` con ese `partner_id`;
+   * las referencias a snapshots en S3 asociadas (`snapshot_s3_key`) — el objeto S3
+     se borra vía la API de S3, no solo la referencia en DB;
+   * opcionalmente, `zone_dwell_sessions` de las zonas que fueron exclusivas de ese
+     Partner, según lo que exija la solicitud legal concreta.
+
+   La operación es **idempotente y auditada** (queda registro de quién purgó qué y
+   cuándo, en un log de supresiones que sobrevive a la purga misma — se guarda el
+   hecho de la supresión, no el dato suprimido). El diseño distingue deliberadamente
+   *retención por defecto* (13 meses, pasiva) de *supresión bajo demanda* (activa,
+   auditada) para no borrar datos que el negocio aún necesita solo porque un Partner
+   se dio de baja, ni retener datos que legalmente deben desaparecer solo porque el
+   timer no venció.
+
 ---
 
 ### 13. Roadmap de Implementación por Fases
 
+> **MLP recortado (v3.4 — Sección 3.1):** las Fases 1-3 de abajo son el MLP que se
+> construye primero, reescritas para reflejar el recorte de madurez operativa que
+> el cliente nunca ve. Estimado total: **8-13 semanas** (antes del recorte,
+> 10-19 — detalle por fase en la Sección 3.1). Ningún feature de cliente se
+> recorta; lo que cambia de fase a fase respecto a v3.3 es: credenciales del Edge
+> por refresh token en vez de mTLS (Fase 1), Reseller/Flujo 6 sale por completo del
+> plan de ejecución del MLP y queda diferido a v2.0 (ya no aparece en ninguna
+> fase), y toda la maquinaria de Managed Agents se confirma exclusivamente en
+> Fase 4.
+
 1. **Fase 1: Tubería de Datos Básica, Model Manager, Esquema Físico y Pruebas
-   Off-Spec (MLP Interno)**
+   Off-Spec (MLP Interno) — estimado 2-3 semanas**
    * *Objetivo:* instalar el Edge Gateway (Docker) en una computadora de oficina
      genérica vieja para testear el "Lowest Common Denominator". Integrar YOLO Nano +
      ByteTrack, **construir el Model Manager con soporte para un único vertical
-     piloto (`yolo_retail.pt`)**, y probar el mecanismo de cola local offline
-     (SQLite). En paralelo, **levantar el esquema físico completo de la Sección 8**
-     (`resellers` → `tenants` → `sites` → `cameras` → `zones` →
-     `tracking_coordinates`, más `users`/`user_site_assignments`), con RLS activo
-     desde el primer commit y la suite pgTAP de aislamiento corriendo en CI — no se
-     pospone la seguridad multi-tenant a una fase posterior.
-   * *Entregable:* Base de Datos Time-Series recibiendo batches de telemetría de
-     forma estable sin colapsar la PC del cliente, con el Edge Gateway resolviendo y
-     cargando su modelo de vertical correctamente al arrancar, y los tres niveles de
-     aislamiento (tenant/site/partner) validados por pruebas automatizadas antes de
-     escribir una sola pantalla de UI.
+     piloto (`yolo_retail.pt`)** — incluyendo desde el primer commit las **descargas
+     OTA resumibles por `Range` y el manejo de expiración de URL firmada** de la
+     Sección 9.1 (la conectividad intermitente de CENAM es la condición de
+     operación normal, no un caso extremo, así que la robustez de descarga no se
+     puede diferir) —, y probar el mecanismo de cola local offline (SQLite). **El
+     aprovisionamiento del Edge Gateway usa autenticación por access token (24h) +
+     refresh token (90 días)** (Sección 8.7.0, Sección 3.1 decisión 5) desde el
+     primer Flujo 1 — sin PKI, revocación real vía `edge_gateways.status='revoked'`
+     bloqueando el siguiente refresh (ventana máxima de exposición 24h). El
+     mecanismo mTLS (Sección 8.7.1) queda documentado y validado en este mismo
+     documento como gancho de Fase 4+, no se construye en Fase 1. En paralelo,
+     **levantar el esquema físico completo de la Sección 8** (`tenants` → `sites` →
+     `cameras` → `zones` → `tracking_coordinates` **particionada nativamente con
+     `pg_partman`, Sección 8.6** — no como hypertable de TimescaleDB, portable a
+     Supabase/Render/Cloud Run desde el día uno (Sección 3.1 decisión 12) —, más
+     `users`/`user_site_assignments`/`partners` con su columna
+     `access_expires_at`), con **RLS completo de las tablas de gestión** (Sección
+     8.3) activo desde el primer commit y la suite pgTAP de aislamiento corriendo
+     en CI — no se pospone la seguridad multi-tenant a una fase posterior. **La
+     tabla `resellers` y su RLS quedan escritos y validados en el esquema pero sin
+     ningún flujo de UI ni backend que los active** (diferido a v2.0, Sección 3.1
+     decisión 2) — no se elimina del esquema, simplemente no se construye encima de
+     ella en el MLP. Ambientes: **Dev + Prod únicamente**, suite pgTAP como gate
+     obligatorio de toda promoción (Sección 8.4). **Aplicar las decisiones
+     Build-vs-Buy de la Sección 7.3** al arrancar cada componente de infraestructura
+     (Postgres nativo, Auth + MFA, orquestador OTA, observabilidad) para no
+     re-litigarlas sprint a sprint.
+   * *Entregable:* Base de Datos Time-Series (particionada, sin TimescaleDB)
+     recibiendo batches de telemetría de forma estable sin colapsar la PC del
+     cliente, con el Edge Gateway autenticado por access+refresh token resolviendo y
+     cargando su modelo de vertical correctamente al arrancar (con reanudación de
+     descarga verificada bajo corte de conexión simulado, y revocación de
+     credencial verificada por ejecución), y los tres niveles de aislamiento
+     (tenant/site/partner) validados por pruebas automatizadas sobre **todas** las
+     tablas del esquema — no solo las de telemetría — antes de escribir una sola
+     pantalla de UI.
 
-2. **Fase 2: El Producto Transaccional B2B2B (Mapeo, Backoffice, Módulo de Reventa
-   y Tableros)**
+2. **Fase 2: El Producto Transaccional B2B2B (Mapeo, Backoffice, Partners y
+   Tableros) — estimado 3-5 semanas**
    * *Objetivo:* crear la herramienta de administración para dibujar los polígonos
-     (zonas) sobre el video. Desarrollar el cálculo lógico (batch) de intersecciones
-     en la nube, alimentando `zone_dwell_sessions`. **Construir el Backoffice de
-     Usuarios** (alta de usuarios `operator`/`viewer`, asignación granular a
-     sucursales vía `user_site_assignments`) **y el Módulo de Reventa** (alta/gestión
-     de Partners y asignación de zonas o sucursales completas) dentro del portal del
-     Asset Owner. Desplegar los tableros frontend (React), incluyendo las vistas
-     agregadas de comparación inter-sucursal (Sección 8.1).
+     (zonas) sobre el video, **incluyendo la convención `zone_type='staff_area'`**
+     para exclusión de personal del conteo de clientes (Sección 6.1, Sección 3.1
+     decisión 9) desde el mismo mapeo de zonas — no es una fase aparte, es un valor
+     más del mismo campo. Desarrollar el cálculo lógico (batch) de intersecciones en
+     la nube, alimentando `zone_dwell_sessions` (excluyendo `staff_area` del
+     agregado de clientes). **Construir el Backoffice de Usuarios** (alta de
+     usuarios `operator`/`viewer`, asignación granular a sucursales vía
+     `user_site_assignments`, MFA vía Supabase Auth) **y el Módulo de Reventa de
+     Partners en un solo paso** (Flujo 3 reescrito v3.4: un formulario → alta +
+     asignación de zonas + invitación, en una transacción atómica — no un asistente
+     de varios pasos), incluyendo el campo opcional `access_expires_at` y el job
+     diario que revoca por expiración (mismo camino que el offboarding manual de
+     12.12). **Implementar la matriz de vista restringida del Partner** (Sección
+     4.1) en el frontend — qué módulos renderiza un Partner Admin/Viewer, encima de
+     la garantía de RLS ya construida. Desplegar los tableros frontend (React),
+     incluyendo las vistas agregadas de comparación inter-sucursal (Sección 8.1).
    * *Entregable:* Dashboard visual mostrando Mapas de Calor, Dwell Time real por
-     zona y comparativos entre sucursales, funcionando correctamente para los tres
-     perfiles de prueba (Tenant Admin, Operator regional, Partner), listo para venta
+     zona (con personal excluido del conteo) y comparativos entre sucursales,
+     funcionando correctamente para los tres perfiles de prueba (Tenant Admin,
+     Operator regional, Partner con vista restringida verificada), con alta/baja de
+     Partner en un solo paso y acceso por tiempo limitado operando, listo para venta
      comercial bajo el esquema B2B2B.
 
 3. **Fase 3: Gestión de Flota, Registry Multi-Vertical, Operación Interna y Valor
-   Premium Cognitivo**
-   * *Objetivo:* implementar el orquestador OTA para gestionar los Edge Nodes
-     remotamente, incluyendo la distribución independiente de actualizaciones de
-     código, modelo y configuración de tracking (canal `canary`/`stable`, Sección
-     8.4). **Formalizar el Model Registry como servicio versionado**, dejando la
-     arquitectura lista para admitir un segundo vertical sin cambios de código.
-     **Poner en marcha los mecanismos de Operación Interna de la Sección 8.5**
-     (break-glass auditado, retención/purga automatizada, cifrado de credenciales de
-     cámara, observabilidad de accesos denegados y salud de flota) antes de aceptar
-     el primer cliente real en producción. Conectar la API de Anthropic para los
-     módulos de chat (Copiloto en vivo, Messages API + Haiku 4.5) y auditorías
-     visuales de stock (Batch API, Sección 12.5), respetando el aislamiento de tres
-     niveles. **Construir el Motor de Acciones** (Sección 12.10: reglas umbral +
-     canales WhatsApp/Slack/correo + `action_log` auditada) — es requisito de
-     paridad competitiva del MLP, no un extra. **Levantar la suite de evaluación de
+   Premium Cognitivo — estimado 3-5 semanas**
+   * *Objetivo:* implementar el orquestador OTA (**Portainer Community Edition**,
+     Sección 7.3) para gestionar los Edge Nodes remotamente, incluyendo la
+     distribución independiente de actualizaciones de código, modelo y
+     configuración de tracking (canal `canary`/`stable`, Sección 8.4). **Construir
+     el Flujo 7 (reemplazo de hardware / DR del Edge, Sección 5)** junto con el
+     orquestador OTA — es la misma superficie operativa (gestión del ciclo de vida
+     del Edge Gateway a escala de flota) —, incluyendo la revocación de
+     access/refresh token del gateway dado de baja (`status='decommissioned'`,
+     Sección 8.7.0) y la cadena `replaced_edge_gateway_id`. **Formalizar el Model
+     Registry como servicio versionado**, dejando la arquitectura lista para
+     admitir un segundo vertical sin cambios de código. **Poner en marcha los
+     mecanismos de Operación Interna de la Sección 8.5** (break-glass auditado,
+     retención/purga automatizada, cifrado de credenciales de cámara,
+     observabilidad de accesos denegados y salud de flota) **junto con las alertas
+     escalonadas de pérdida de datos offline (Sección 12.11: día 1 UI → día 3 correo
+     → día 5 Slack/Telegram/WhatsApp según lo que el cliente tenga activo)**.
+     Conectar la API de Anthropic para los módulos de chat (Copiloto en vivo,
+     Messages API + Haiku 4.5) y auditorías visuales de stock (Batch API, Sección
+     12.5), respetando el aislamiento de tres niveles — **sin Managed Agents, sin
+     sandbox, sin el multiplicador 15x** (Sección 3.1 decisión 1); las auditorías
+     escriben en `agent_findings` (Sección 12.7) igual que lo hará el Enjambre en
+     Fase 4, mismo sumidero de datos. **Construir el Motor de Acciones** (Sección
+     12.10: reglas umbral + **Slack/Telegram/Correo por defecto, WhatsApp opt-in
+     con costo pass-through** + plantillas de SOP de compliance + `action_log`
+     auditada) — es requisito de paridad competitiva del MLP, no un extra, y es el
+     mismo motor que sirve las alertas de 12.11. **Implementar el endpoint de
+     offboarding de Partner con derecho al olvido** (`DELETE /v1/tenants/
+     {tenant_id}/partners/{partner_id}/data`, Sección 12.12) — depende del Módulo
+     de Reventa ya construido en la Fase 2. **Levantar la suite de evaluación de
      calidad del Copiloto** (Sección 12.9: ~20 casos golden de retail + judge con
      rúbrica + firma humana) integrada como gate del pipeline antes del primer
-     release comercial.
+     release comercial. **El Flujo 6 (referido de Reseller) no se construye en esta
+     fase** — queda diferido a v2.0 junto con el resto del rol Reseller (Sección
+     3.1 decisión 2).
    * *Entregable:* sistema End-to-End autónomo, gestionable a escala, produciendo
-     insights cognitivos y acciones automáticas auditables, con la infraestructura
-     de Model Registry validada para onboardear un segundo vertical, y con los
-     controles de operación interna (Sección 8.5) y el gate de calidad (12.9)
-     verificados — no solo documentados — antes del primer cliente en producción.
+     insights cognitivos y acciones automáticas auditables (incluidas las alertas
+     escalonadas de flota offline y la revocación de credenciales de gateways
+     reemplazados), con la infraestructura de Model Registry validada para
+     onboardear un segundo vertical, el endpoint de purga por derecho al olvido
+     operando bajo auditoría, y con los controles de operación interna (Sección
+     8.5) y el gate de calidad (12.9) verificados — no solo documentados — antes
+     del primer cliente en producción. **MLP completo en este punto: 8-13 semanas
+     acumuladas desde el inicio de Fase 1.**
 
-4. **Fase 4: Enjambre Cognitivo del Plan Enterprise (post-MLP)**
+4. **Fase 4: Enjambre Cognitivo del Plan Enterprise + Reseller v2.0 (post-MLP)**
    * *Objetivo:* implementar la arquitectura completa de la Sección 12 sobre
      Managed Agents: sesiones por contexto de aislamiento (12.1-12.2), scheduled
      deployments para la corrida diaria (12.4), subagentes según la matriz de
-     paralelizabilidad (12.6), patrón de artefactos con `agent_findings` (12.7),
-     observabilidad sin contenido con `agent_run_metrics` (12.8) y Outcomes como
-     control de calidad continuo (12.9). Validar el COGS real por sede contra el
-     modelo de la Sección 10.1 durante un piloto pagado antes de abrir la venta
-     general del Plan Enterprise.
+     paralelizabilidad (12.6), patrón de artefactos con `agent_findings` (12.7) —
+     ya en uso desde Fase 3 con auditorías de una sola fila, ahora recibiendo el
+     volumen del Enjambre —, observabilidad sin contenido con `agent_run_metrics`
+     (12.8) y Outcomes como control de calidad continuo (12.9). Validar el COGS
+     real por sede contra el modelo de la Sección 10.1 durante un piloto pagado
+     antes de abrir la venta general del Plan Enterprise. **Activar mTLS (Sección
+     8.7.1)** si algún vertical o cliente lo exige contractualmente — sin
+     rediseño, sobre el mismo `edge_gateways`. **Activar el rol Reseller completo**
+     (Flujo 6, Sección 5; RLS de `resellers`, ya construido en Fase 1) cuando se
+     cierre el primer acuerdo de canal real — es habilitar UI/backend sobre un
+     esquema que ya existe, no reconstruirlo.
    * *Entregable:* Plan Enterprise comercializable con COGS medido (no estimado),
-     márgenes confirmados ≥ 84%, y el Copiloto en vivo + Enjambre operando por los
-     dos caminos de latencia definidos en 12.4.
+     márgenes confirmados ≥ 84%, el Copiloto en vivo + Enjambre operando por los dos
+     caminos de latencia definidos en 12.4, y — si el negocio lo requiere en este
+     punto — el ciclo comercial de Reseller y/o mTLS activos sin haber tocado el
+     esquema físico del MLP.
 
 ---
 
-### Apéndice A — Changelog de esta iteración (v3.1 → v3.2-FINAL)
+### Apéndice A — Changelog (v3.4 arriba; iteraciones previas debajo)
+
+#### A.0 Changelog v3.3-FINAL → v3.4-FINAL
+
+Esta iteración deriva de una especificación externa de "MLP Recortado" —
+consolidada a partir de una serie de decisiones de negocio ya confirmadas — que
+define **qué construir primero** sin renunciar a ningún feature de cliente ni a la
+propuesta de valor frente a Agrex.ai. El documento base (v3.3) sigue siendo la
+fuente de verdad de la arquitectura completa; v3.4 le agrega una capa explícita de
+secuenciación de ejecución (Sección 3.1) y ajusta un puñado de mecanismos
+concretos donde el recorte sí toca diseño (credenciales, hosting, Partners, Motor
+de Acciones). Formato qué/por qué/trade-off, igual que las iteraciones anteriores.
+
+1. **Nueva Sección 3.1 — MLP Recortado: doce decisiones de alcance con gancho de
+   activación.**
+   *Qué:* tabla consolidada de las doce decisiones de secuenciación (Managed
+   Agents a Fase 4, Reseller fuera del MLP, ambientes Dev+Prod, credenciales por
+   refresh token, banca fuera del MLP, canales del Motor de Acciones, SOP
+   compliance, exclusión de personal sin demografía, MFA, máquina de estados de
+   onboarding, hosting Supabase+R2+Render/Cloud Run+GitHub), cada una con su
+   "gancho": dónde vive ya construido en el documento y qué la activa sin
+   rediseño.
+   *Por qué:* sin esta sección, el recorte de alcance vivía repartido en once
+   respuestas de negocio sin un solo lugar del SDD que las consolidara — riesgo de
+   que el equipo de desarrollo interpretara el alcance de forma distinta al
+   negocio.
+   *Trade-off:* ninguno; es documentación de una decisión ya tomada, no una
+   decisión técnica nueva.
+
+2. **Reseller — corrección de alcance: todo el flujo fuera del MLP, no solo su
+   comisión (Secciones 3, 4, 5, 13).**
+   *Qué:* v3.3 solo excluía la liquidación de comisión del Reseller del alcance;
+   v3.4 corrige esto — el Flujo 6 completo y cualquier UI/backend sobre el rol
+   Reseller quedan diferidos a v2.0. La tabla `resellers` y su RLS (ya construidos
+   y validados) permanecen en el esquema, inertes.
+   *Por qué:* confirmado explícitamente por el negocio — ningún caso de uso del
+   MLP requirió un Reseller; todo lo necesario es la relación Asset Owner↔Partner.
+   *Trade-off:* ninguno para el esquema (nada se elimina); el equipo de producto no
+   construye una UI de gestión de cartera que nadie usaría en el año 1.
+
+3. **Credenciales del Edge Gateway para el MLP: access + refresh token, mTLS
+   diferido a Fase 4+ (Sección 8.7, reestructurada en 8.7.0/8.7.1).**
+   *Qué:* el mecanismo por defecto pasa de certificado cliente mTLS (v3.3) a
+   access token (24h, JWT stateless) + refresh token (90 días, hash persistido,
+   rotado en cada uso). Revocación real: `edge_gateways.status='revoked'` bloquea
+   el siguiente refresh — ventana máxima de exposición 24h (vs. revocación
+   inmediata de mTLS). El mecanismo mTLS queda íntegro en el documento como 8.7.1,
+   con el mismo enum de `status` y el mismo patrón de revocación contra estado en
+   DB, listo para activarse sin rediseño.
+   *Por qué:* mTLS es más PKI de la que el MLP necesita — revocación en ≤24h es
+   suficiente para el perfil de riesgo del lanzamiento (retail/logística, no
+   banca), y elimina la complejidad de operar una CA interna desde el día uno.
+   *Trade-off:* ventana de exposición de hasta 24h tras revocar un gateway
+   comprometido (vs. inmediata con mTLS) — aceptado explícitamente como parte del
+   recorte de madurez operativa; se revierte activando 8.7.1 sin tocar el resto
+   del esquema. Validado por ejecución: refresh legítimo funciona, refresh de
+   gateway revocado/expirado/con token ya rotado (replay) es rechazado en los
+   tres casos.
+
+4. **Hosting del MLP: Supabase + Cloudflare R2 + Render/Cloud Run + GitHub,
+   AWS/RDS como ruta de Fase 4+ (Secciones 1, 7, 7.3, 10.1).**
+   *Qué:* se fija el stack de hosting del MLP y se retiran las menciones de AWS
+   como default (Model Registry, Cloud Hosting) — quedan como ruta de
+   escalamiento documentada, no como decisión del MLP.
+   *Por qué:* verificado contra documentación oficial: una cuenta nueva de AWS se
+   cierra a los 6 meses salvo upgrade a plan pagado (créditos de hasta $200); una
+   cuenta nueva de GCP tiene $300 válidos solo 90 días. Ninguno de los dos sostiene
+   una cuenta nueva sin reloj de expiración; Supabase/Cloudflare R2/Render/Cloud
+   Run/GitHub sí, en sus respectivos free tiers.
+   *Trade-off:* migrar a AWS/RDS en Fase 4+ es un cambio de endpoint sobre una API
+   equivalente (R2 es compatible con S3), no un rediseño — costo de migración bajo
+   si el volumen lo justifica.
+
+5. **Tres refinamientos de Partners (Secciones 4.1, 5 Flujo 3, 8.0).**
+   *Qué:* (a) alta/baja en un solo paso (formulario único → alta + asignación de
+   zonas + invitación, transacción atómica — reemplaza el asistente de varios
+   pasos descrito en versiones anteriores); (b) nueva columna
+   `partners.access_expires_at` (NULL = indefinido) con job diario que revoca por
+   el mismo camino del offboarding manual (12.12) cuando vence; (c) matriz
+   explícita de qué pantallas ve un Partner Admin/Viewer en el frontend (nueva
+   Sección 4.1), como capa de producto encima de la garantía de RLS ya existente.
+   *Por qué:* la revisión de alcance reveló que estas tres piezas sí importan para
+   la propuesta de valor del MLP, aunque no estuvieran en el recorte original —
+   activaciones de marca por temporada necesitan acceso con fecha de vencimiento;
+   un wizard de varios pasos es fricción de producto innecesaria; nadie había
+   enumerado qué ve realmente un Partner.
+   *Trade-off:* ninguno; son adiciones de bajo costo sobre infraestructura ya
+   construida (el mecanismo de revocación de 12.12, el RLS de 8.3). Validado por
+   ejecución: la consulta del job diario devuelve exactamente los Partners activos
+   y vencidos, ninguno de los indefinidos/futuros/ya revocados.
+
+6. **Ambientes del MLP: Dev + Prod, QA/Staging como ambiente adicional futuro
+   (Sección 8.4).**
+   *Qué:* se reduce de cuatro ambientes a dos para el MLP, con la suite pgTAP
+   completa como gate obligatorio de toda promoción — el pipeline no se recorta,
+   solo el número de ambientes intermedios.
+   *Por qué:* mantener QA y Staging como instancias separadas antes de tener
+   volumen de clientes que lo justifique es costo operativo sin beneficio de
+   seguridad adicional, dado que Dev y Prod nunca comparten clúster de todos
+   modos.
+   *Trade-off:* menos superficie de prueba en un ambiente espejo de Prod antes del
+   primer release; mitigado por el gate pgTAP obligatorio, que ya cubre el
+   aislamiento multi-tenant sin necesitar un ambiente adicional. Se agrega QA/
+   Staging como nodo más del mismo pipeline cuando el volumen lo justifique.
+
+7. **Motor de Acciones: reordenamiento de canales y plantillas de SOP (Sección
+   12.10, tabla Build-vs-Buy 7.3, economía 10.1).**
+   *Qué:* Slack, Telegram y correo pasan a ser el default (costo marginal cero);
+   WhatsApp Business API se mantiene disponible desde el día 1 pero como opt-in
+   con su costo de Meta facturado como línea aparte al cliente, nunca absorbido en
+   el COGS. Se agregan plantillas de reglas de compliance sobre el mismo motor:
+   personal no presente en zona de caja, apertura/cierre fuera de horario, cliente
+   sin atender.
+   *Por qué:* WhatsApp seguía siendo tratado como "el canal" por defecto en v3.3,
+   lo que habría absorbido su costo de Meta en el COGS de todos los clientes
+   aunque no todos lo usaran; las plantillas de SOP son la misma infraestructura
+   de reglas-por-umbral ya diseñada, aplicada a más casos de uso de valor.
+   *Trade-off:* ninguno técnico; es una re-etiquetación de costos (quién paga qué)
+   y una extensión de catálogo de reglas sobre un motor sin cambios.
+
+8. **Zona de exclusión de personal; demografía confirmada fuera de alcance
+   (Secciones 3, 6.1, 12.10).**
+   *Qué:* convención `zone_type='staff_area'` (sin migración de esquema —
+   `zones.zone_type` ya es texto libre) que el Motor Matemático excluye del
+   conteo de clientes. Demografía (edad/género) se declara explícitamente fuera
+   de alcance por defecto, reforzando Zero Biometrics como diferenciador de
+   privacidad frente a Agrex.ai.
+   *Por qué:* sin exclusión de personal, empleados que pasan horas frente a una
+   cámara inflan artificialmente el tráfico/dwell time agregado y sesgan el
+   Copiloto; demografía es una capa de sensibilidad de dato mayor que la sola
+   detección de `person`, y no es necesaria para ningún caso de uso del MLP.
+   *Trade-off:* ninguno; exclusión de personal es bajo costo y alto valor de
+   precisión; demografía queda disponible caso por caso bajo consentimiento
+   explícito del cliente, nunca por defecto.
+
+9. **MFA y máquina de estados de onboarding/offboarding de Tenants (Secciones 4,
+   5 Flujo 1).**
+   *Qué:* MFA confirmado como configuración de Supabase Auth, sin desarrollo
+   adicional. Variante MLP del Flujo 1: auto-registro del Tenant → aprobación de
+   un clic del SuperAdmin → activo; baja dispara retención + revocación de
+   tokens del Edge Gateway (mismo mecanismo de la decisión 3 arriba).
+   *Por qué:* MFA de fábrica no requería trabajo de diseño, solo confirmarlo en
+   el documento; la máquina de estados de onboarding estaba implícita en el
+   `status` de `tenants` pero nunca se había descrito como flujo explícito con su
+   variante self-service.
+   *Trade-off:* ninguno; ambos son formalización de mecanismos ya disponibles o
+   ya implícitos en el esquema.
+
+10. **Roadmap (Sección 13) reescrito con el MLP recortado.**
+    *Qué:* Fases 1-3 actualizadas para reflejar credenciales por refresh token, la
+    salida completa de Reseller/Flujo 6 del plan de ejecución (se mueve a Fase 4
+    junto con mTLS), ambientes Dev+Prod, y el reordenamiento de canales/plantillas
+    del Motor de Acciones; estimado total actualizado a 8-13 semanas (antes
+    10-19).
+    *Por qué:* el roadmap es el documento operativo que el equipo de desarrollo
+    sigue sprint a sprint — tenía que reflejar el recorte real, no solo las
+    secciones de diseño.
+    *Trade-off:* ninguno; es la propagación del recorte ya decidido al plan de
+    ejecución.
+
+**Verificaciones nuevas de esta iteración (se suman a la tabla A.4)**
+
+| Afirmación | Método | Resultado |
+| --- | --- | --- |
+| AWS: cuenta nueva se cierra a los 6 meses salvo upgrade a plan pagado (créditos hasta $200); ~30 servicios "always-free" no expiran pero no evitan el cierre de cuenta | Documentación oficial de AWS (2026-07) | Confirmado |
+| GCP: crédito de bienvenida $300 válido 90 días para cuentas nuevas | Documentación oficial de Google Cloud (2026-07) | Confirmado |
+| Mecanismo de refresh token: refresh legítimo funciona; refresh de gateway revocado/expirado/con token ya rotado (replay) es rechazado en los tres casos | Ejecución real contra PostgreSQL 16 | Los cuatro escenarios se comportan exactamente como se diseñó |
+| Job diario de expiración de acceso de Partner (`partners.access_expires_at`): devuelve exactamente los Partners activos y vencidos | Ejecución real contra PostgreSQL 16, incluye verificación de plan de consulta (usa el índice parcial) | Confirmado |
+| Cadena de reemplazo de Edge Gateway (Flujo 7) compatible con el mecanismo de refresh token | Ejecución real contra PostgreSQL 16 | Confirmado — mismo patrón que mTLS, sin cambios al enum de `status` |
+
+---
+
+### Apéndice A (histórico) — Changelog de la iteración v3.2-FINAL → v3.3-FINAL
+
+#### A.0 Changelog v3.2-FINAL → v3.3
+
+Cada entrada: **qué se modificó**, **por qué**, **qué trade-off implica**. Mismo
+formato que las secciones A.1-A.4 (que documentan la iteración v3.2, conservadas
+abajo como registro histórico).
+
+**Arquitectura de datos**
+
+1. **Rediseño de la capa time-series: TimescaleDB → Postgres nativo + `pg_partman`
+   (Secciones 7, 8.0, 8.6).**
+   *Qué:* `tracking_coordinates` deja de ser una hypertable de TimescaleDB y pasa a
+   particionamiento declarativo nativo `PARTITION BY RANGE ("time")` gestionado por
+   `pg_partman`; se reescribe todo el DDL de creación, retención y compresión.
+   *Por qué:* TimescaleDB está deprecado para proyectos nuevos de Supabase
+   (verificado contra su documentación oficial), y Supabase free tier es el destino
+   de hosting de bajo costo/fallback — el esquema anterior simplemente no corría
+   ahí. Es una decisión de **portabilidad**: el mismo esquema debe correr en
+   Supabase, RDS y Postgres local.
+   *Trade-off:* se pierde la compresión columnar automática de Timescale (>90% de
+   ratio); se mitiga con TOAST + tipos ajustados, `pg_squeeze` en particiones frías,
+   y tiering del histórico >3 meses a S3 Glacier. El presupuesto de $15-27/sede se
+   mantiene, a costa de un job de tiering operativo en vez de una política
+   declarativa. Validado por ejecución contra PostgreSQL 16 (creación, enrutamiento,
+   llegada tardía, propagación de índices).
+
+2. **RLS completo y real de las ocho tablas restantes (Sección 8.3).**
+   *Qué:* se escribe y valida por ejecución el `ENABLE/FORCE RLS` + políticas de
+   `sites`, `cameras`, `zones`, `users`, `partners`, `tenants`, `resellers`,
+   `user_site_assignments`, con helpers de pertenencia `SECURITY DEFINER` para
+   evitar recursión mutua entre políticas.
+   *Por qué:* v3.2 decía "la misma política aplica... se omite por brevedad" pero
+   nunca lo escribió, y cinco tablas no tenían RLS del todo — cada una era una fuga:
+   cualquier rol leía la tabla entera. "Sigue el mismo patrón" en prosa no es un
+   control de seguridad.
+   *Trade-off:* introduce funciones `SECURITY DEFINER` (dueño con `BYPASSRLS`), que
+   son poder que hay que auditar; se acota devolviendo solo booleanos/escalares y
+   documentando el patrón. Alternativa (subconsultas inline) causa
+   `infinite recursion` — no era opción.
+
+3. **Fix de `agent_findings_write`: subagente en contexto Partner no podía escribir
+   (Sección 12.7).**
+   *Qué:* se agrega la rama Partner que deriva `tenant_id` del padre del partner en
+   vez de exigir `= app_current_tenant_id()` (que es NULL en sesión de Partner);
+   test pgTAP 05 nuevo que ejecuta el INSERT.
+   *Por qué:* bug real y silencioso — el patrón de artefactos (12.7) depende de que
+   los subagentes escriban hallazgos, y en sesión de Partner **toda** escritura
+   fallaba con violación de RLS. Descubierto y confirmado por ejecución.
+   *Trade-off:* ninguno; es corrección pura. La rama nueva sigue impidiendo escribir
+   a nombre de otro tenant (validado).
+
+4. **Política de INSERT para `zone_dwell_sessions` (Sección 8.3).**
+   *Qué:* se escribe la política `zone_dwell_sessions_ingest` scoped por
+   `app.motor_site_id` que v3.2 solo mencionaba.
+   *Por qué:* con `FORCE RLS`, una tabla sin política de INSERT rechaza toda
+   escritura — el Motor Matemático no podía escribir ni una fila de dwell. Misma
+   clase de defecto ya corregido para `tracking_coordinates` en v3.2.
+   *Trade-off:* un subquery de cadena `zone→camera→site` por lote (amortizado);
+   ninguno funcional. Validado por ejecución.
+
+5. **Decisión explícita de RLS para `agent_run_metrics` (Sección 12.8).**
+   *Qué:* se decide y documenta que es tabla exclusivamente interna
+   (`FORCE RLS` + sin política de lectura, deny-by-default total), como
+   `platform_admins`/`break_glass_audit_log`.
+   *Por qué:* v3.2 la dejó sin RLS declarado; exponerla filtraría patrones de uso
+   del cliente sin valor para él. El COGS agregado, si se decide exponer, irá por
+   una vista de resumen separada.
+   *Trade-off:* el Asset Owner no ve su consumo por esta tabla directamente
+   (deliberado); ninguno en seguridad. Validado: cero filas para rol de aplicación.
+
+6. **Residual "2 niveles" del diagrama de la Sección 6.**
+   *Qué:* el diagrama ASCII decía "RLS de 2 niveles" y "PostgreSQL+Timescale" — se
+   corrige a "3 niveles: tenant→site→partner" y "PostgreSQL nativo + pg_partman".
+   *Por qué:* residual no capturado por la corrección de terminología de v3.2.
+   *Trade-off:* ninguno; consistencia.
+
+**Ciclo de vida y operación**
+
+7. **Flujo 6 — Referido de Tenant por Reseller (Sección 5) + exclusión de comisión
+   de Reseller (Sección 3).**
+   *Qué:* se documenta el ciclo comercial del Reseller (referir → aprobación
+   SuperAdmin → visibilidad de metadata acotada) y se declara fuera de alcance la
+   liquidación de su comisión.
+   *Por qué:* el rol Reseller Admin existía en la Sección 4 sin flujo ni límite de
+   alcance — un gap de ciclo de vida.
+   *Trade-off:* la plataforma provee atribución pero no cobro; mismo principio ya
+   aplicado a Partners, coherente.
+
+8. **Flujo 7 — Reemplazo de Hardware / DR del Edge (Sección 5) + columnas nuevas en
+   `edge_gateways` (Sección 8.7).**
+   *Qué:* código de activación marcado como "reemplazo de edge_id=X" que reutiliza
+   `site`/`cameras`; `replaced_edge_gateway_id` (FK a sí misma), estados
+   `revoked`/`decommissioned`.
+   *Por qué:* el reemplazo de hardware es frecuente en BYOD/CENAM y no tenía flujo —
+   riesgo de duplicar sedes/cámaras o perder trazabilidad.
+   *Trade-off:* ninguno; la telemetría histórica vive por `site`/`camera`, no por
+   `edge_id`, así que el reemplazo no pierde datos. Validado por ejecución
+   (cadena de reemplazo + enum ampliado).
+
+9. **Credenciales del Edge por mTLS (Sección 8.7; fila IAM de Sección 4
+   actualizada).**
+   *Qué:* se reemplaza el "JWT/API Key" genérico por certificado cliente mTLS con
+   rotación proactiva y revocación server-side contra `edge_gateways.status` en cada
+   handshake.
+   *Por qué:* el Edge Gateway es el punto más expuesto (vive en la sede del cliente)
+   y v3.2 no especificaba almacenamiento, rotación ni revocación de su credencial.
+   *Trade-off:* operar una CA interna (build, Sección 7.3) a cambio de revocación
+   inmediata y credenciales que sobreviven reinicios sin flujo de refresh — crítico
+   con la conectividad intermitente de CENAM.
+
+10. **Alertas escalonadas antes de pérdida de datos offline (Sección 12.11).**
+    *Qué:* escalera día 1 (UI) → día 3 (correo) → día 5 (WhatsApp/Slack vía Motor de
+    Acciones) con mensaje que indica los días restantes antes de evicción FIFO.
+    *Por qué:* un aviso binario offline/online no comunica la urgencia creciente de
+    pérdida irrecuperable de telemetría cuando la cola local se llena.
+    *Trade-off:* reutiliza el Motor de Acciones (12.10) con una regla de catálogo,
+    no infraestructura nueva; ninguno.
+
+11. **Offboarding de Partner y derecho al olvido (Sección 12.12).**
+    *Qué:* se separa la *visibilidad* del Asset Owner sobre hallazgos de un Partner
+    revocado (ya resuelta por RLS, sin cambios) de la *purga por solicitud legal*
+    (endpoint dedicado y auditado, distinto del timer pasivo de 13 meses).
+    *Por qué:* v3.2 no distinguía retención por defecto de supresión bajo demanda —
+    riesgo de borrar datos aún necesarios, o de retener datos que legalmente deben
+    desaparecer.
+    *Trade-off:* la purga es una operación explícita y auditada (más fricción) a
+    cambio de un contrato de privacidad defendible.
+
+12. **Descargas OTA resumibles y expiración de URL firmada (Sección 9.1).**
+    *Qué:* reanudación por `Range`, TTL de URL firmada de 1h, y re-pedido del
+    manifiesto (no reintento de la URL vencida) con el mismo backoff exponencial de
+    la cola de telemetría.
+    *Por qué:* las conexiones intermitentes de CENAM rompen descargas de checkpoints
+    a mitad; sin reanudación se reinicia desde cero y puede no completar nunca.
+    *Trade-off:* ninguno; S3 soporta `Range` nativamente, sin trabajo de servidor.
+
+**Negocio**
+
+13. **Tabla Build-vs-Buy (Sección 7.3).**
+    *Qué:* registro explícito de construir vs. adoptar por componente, con motivo y
+    trade-off, incluida la DB forzada a Postgres nativo por la Sección 8.6.
+    *Por qué:* evitar re-litigar estas decisiones cada sprint y dejar claro que el
+    foco de "build" es solo el diferenciador (aislamiento B2B2B + Motor Base).
+    *Trade-off:* documentado por fila; el criterio transversal es no construir lo no
+    diferenciador y elegir "buy" de costo ~cero hasta tener volumen.
+
+14. **Enganche de los ítems nuevos de v3.3 al Roadmap (Sección 13).**
+    *Qué:* las seis piezas nuevas de esta iteración (Flujo 6, Flujo 7, mTLS del
+    Edge/8.7, descargas OTA resumibles/9.1, alertas escalonadas/12.11, offboarding
+    con derecho al olvido/12.12) más la tabla Build-vs-Buy/7.3 quedaban escritas en
+    su sección propia pero **sin mención en ninguna fase del roadmap** — vivían en
+    el diseño sin estar ancladas al plan de ejecución. Se ubican así: mTLS (8.7),
+    las descargas resumibles (9.1) y Build-vs-Buy (7.3) → **Fase 1**, junto al
+    Model Manager y el esquema físico, porque son parte del mecanismo definitivo que
+    se construye una sola vez (no tiene sentido levantar Model Manager sin
+    reanudación de descarga, ni el Edge Gateway con una credencial provisional que
+    luego se reemplaza); Flujo 6, Flujo 7 y las alertas escalonadas (12.11) →
+    **Fase 3**, junto a Operación Interna (8.5) y el Motor de Acciones (12.10), por
+    ser extensiones del mismo trabajo de observabilidad y ciclo de vida de flota que
+    ya vive ahí; el offboarding con derecho al olvido (12.12) → también **Fase 3**,
+    porque aunque opera *sobre* el Módulo de Reventa construido en la Fase 2, es una
+    operación de purga auditada que pertenece al mismo bloque de cumplimiento y
+    operación interna que el resto de la fase, no al bloque transaccional de la
+    Fase 2.
+    *Por qué:* un SDD que se declara la única fuente de verdad para desarrollo no
+    puede dejar piezas de arquitectura sin un lugar en el plan de ejecución — el
+    equipo de desarrollo necesita saber en qué sprint cae cada cosa, no solo que
+    existe en algún lado del documento.
+    *Trade-off:* ninguno; es una corrección de trazabilidad, no de contenido técnico
+    — ninguna sección previa cambia, solo se referencian desde el roadmap.
+
+**Verificaciones nuevas de esta iteración (se suman a la tabla A.4)**
+
+| Afirmación | Método | Resultado |
+| --- | --- | --- |
+| TimescaleDB deprecado en proyectos nuevos de Supabase (PG17) | Documentación oficial de Supabase (2026-07) | Confirmado; motiva el rediseño de 8.6 |
+| Particionamiento nativo: creación, enrutamiento por `"time"`, llegada tardía, índices propagados | Ejecución real contra PostgreSQL 16 | Corre sin errores |
+| RLS de las 8 tablas de gestión + helpers `SECURITY DEFINER` sin recursión | Ejecución real contra PostgreSQL 16, rol no-superusuario | 23 políticas; aislamiento cruzado verificado (admin/partner/operator/reseller) |
+| Fix `agent_findings_write` en contexto Partner | Ejecución real (INSERT en sesión de Partner + rechazo de tenant ajeno) | Antes fallaba; ahora inserta y bloquea lo ajeno |
+| Política INSERT de `zone_dwell_sessions` | Ejecución real (site correcto inserta, ajeno rechazado) | Correcto |
+| `agent_run_metrics` deny-by-default | Ejecución real (rol de aplicación → 0 filas) | Correcto |
+| `edge_gateways` mTLS + cadena de reemplazo | Ejecución real (ALTER + FK a sí misma + enum ampliado) | Correcto |
+| `pg_partman` `create_parent`/retención | Documentación oficial de pg_partman 5.x | Verificado documentalmente (extensión no presente en el entorno de auditoría) |
+
+---
+
+### Apéndice A (histórico) — Changelog de la iteración v3.1 → v3.2-FINAL
 
 Cada entrada indica: **qué se modificó**, **por qué**, y **qué trade-off implica**.
 
