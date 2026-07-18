@@ -38,8 +38,13 @@ del Edge por **mTLS** con rotación y revocación contra estado en DB (8.7); ale
 escalonadas antes de pérdida de datos offline vía el Motor de Acciones (12.11);
 offboarding de Partner con derecho al olvido sobre `agent_findings` (12.12);
 descargas OTA resumibles con manejo de expiración de URL firmada (9.1); y una tabla
-de decisiones **Build-vs-Buy** (7.3). El resto del documento no se toca salvo donde
-estas correcciones exigen consistencia.
+de decisiones **Build-vs-Buy** (7.3). (4) **Enganche al Roadmap:** las seis piezas
+del punto (3) más la tabla Build-vs-Buy quedaban sin mención en la Sección 13 —
+diseñadas pero no ancladas al plan de ejecución. Se ubican explícitamente en Fase 1
+(mTLS, descargas resumibles, Build-vs-Buy — mecanismos definitivos que se
+construyen una sola vez) y Fase 3 (Flujo 6, Flujo 7, alertas escalonadas y
+offboarding — extensiones de Operación Interna y el Motor de Acciones). El resto
+del documento no se toca salvo donde estas correcciones exigen consistencia.
 
 **v3.2-FINAL:** auditoría integral en tres frentes y cierre del
 documento como versión definitiva. (1) **Negocio:** la Sección 10.1 se reescribe con
@@ -2902,17 +2907,34 @@ hay que distinguir dos cosas que versiones anteriores mezclaban:
    * *Objetivo:* instalar el Edge Gateway (Docker) en una computadora de oficina
      genérica vieja para testear el "Lowest Common Denominator". Integrar YOLO Nano +
      ByteTrack, **construir el Model Manager con soporte para un único vertical
-     piloto (`yolo_retail.pt`)**, y probar el mecanismo de cola local offline
-     (SQLite). En paralelo, **levantar el esquema físico completo de la Sección 8**
-     (`resellers` → `tenants` → `sites` → `cameras` → `zones` →
-     `tracking_coordinates`, más `users`/`user_site_assignments`), con RLS activo
-     desde el primer commit y la suite pgTAP de aislamiento corriendo en CI — no se
-     pospone la seguridad multi-tenant a una fase posterior.
-   * *Entregable:* Base de Datos Time-Series recibiendo batches de telemetría de
-     forma estable sin colapsar la PC del cliente, con el Edge Gateway resolviendo y
-     cargando su modelo de vertical correctamente al arrancar, y los tres niveles de
-     aislamiento (tenant/site/partner) validados por pruebas automatizadas antes de
-     escribir una sola pantalla de UI.
+     piloto (`yolo_retail.pt`)** — incluyendo desde el primer commit las **descargas
+     OTA resumibles por `Range` y el manejo de expiración de URL firmada** de la
+     Sección 9.1 (la conectividad intermitente de CENAM es la condición de
+     operación normal, no un caso extremo, así que la robustez de descarga no se
+     puede diferir) —, y probar el mecanismo de cola local offline (SQLite). El
+     **aprovisionamiento del Edge Gateway usa autenticación por certificado mTLS**
+     desde el primer Flujo 1 (Sección 8.7: emisión al canjear el código de
+     activación, columnas `cert_serial`/`cert_expires_at` en `edge_gateways`) — no
+     se construye primero con JWT/API Key para migrar después; el mecanismo
+     definitivo de credencial se construye una sola vez. En paralelo, **levantar el
+     esquema físico completo de la Sección 8** (`resellers` → `tenants` → `sites` →
+     `cameras` → `zones` → `tracking_coordinates` **particionada nativamente con
+     `pg_partman`, Sección 8.6** — no como hypertable de TimescaleDB, portable a
+     Supabase/RDS/local desde el día uno —, más `users`/`user_site_assignments`),
+     con **RLS completo de las ocho tablas de gestión** (Sección 8.3) activo desde
+     el primer commit y la suite pgTAP de aislamiento (seis tests) corriendo en
+     CI — no se pospone la seguridad multi-tenant a una fase posterior. **Aplicar
+     las decisiones Build-vs-Buy de la Sección 7.3** al arrancar cada componente de
+     infraestructura (Postgres nativo, Auth, orquestador OTA, observabilidad) para
+     no re-litigarlas sprint a sprint.
+   * *Entregable:* Base de Datos Time-Series (particionada, sin TimescaleDB)
+     recibiendo batches de telemetría de forma estable sin colapsar la PC del
+     cliente, con el Edge Gateway autenticado por mTLS resolviendo y cargando su
+     modelo de vertical correctamente al arrancar (con reanudación de descarga
+     verificada bajo corte de conexión simulado), y los tres niveles de aislamiento
+     (tenant/site/partner) validados por pruebas automatizadas sobre **todas** las
+     tablas del esquema — no solo las de telemetría — antes de escribir una sola
+     pantalla de UI.
 
 2. **Fase 2: El Producto Transaccional B2B2B (Mapeo, Backoffice, Módulo de Reventa
    y Tableros)**
@@ -2934,25 +2956,41 @@ hay que distinguir dos cosas que versiones anteriores mezclaban:
    * *Objetivo:* implementar el orquestador OTA para gestionar los Edge Nodes
      remotamente, incluyendo la distribución independiente de actualizaciones de
      código, modelo y configuración de tracking (canal `canary`/`stable`, Sección
-     8.4). **Formalizar el Model Registry como servicio versionado**, dejando la
-     arquitectura lista para admitir un segundo vertical sin cambios de código.
-     **Poner en marcha los mecanismos de Operación Interna de la Sección 8.5**
-     (break-glass auditado, retención/purga automatizada, cifrado de credenciales de
-     cámara, observabilidad de accesos denegados y salud de flota) antes de aceptar
-     el primer cliente real en producción. Conectar la API de Anthropic para los
-     módulos de chat (Copiloto en vivo, Messages API + Haiku 4.5) y auditorías
-     visuales de stock (Batch API, Sección 12.5), respetando el aislamiento de tres
-     niveles. **Construir el Motor de Acciones** (Sección 12.10: reglas umbral +
-     canales WhatsApp/Slack/correo + `action_log` auditada) — es requisito de
-     paridad competitiva del MLP, no un extra. **Levantar la suite de evaluación de
-     calidad del Copiloto** (Sección 12.9: ~20 casos golden de retail + judge con
-     rúbrica + firma humana) integrada como gate del pipeline antes del primer
-     release comercial.
+     8.4). **Construir el Flujo 7 (reemplazo de hardware / DR del Edge, Sección 5)**
+     junto con el orquestador OTA — es la misma superficie operativa (gestión del
+     ciclo de vida del Edge Gateway a escala de flota), incluyendo la revocación de
+     certificado mTLS del gateway dado de baja (`status='decommissioned'`, Sección
+     8.7) y la cadena `replaced_edge_gateway_id`. **Formalizar el Model Registry
+     como servicio versionado**, dejando la arquitectura lista para admitir un
+     segundo vertical sin cambios de código. **Poner en marcha los mecanismos de
+     Operación Interna de la Sección 8.5** (break-glass auditado, retención/purga
+     automatizada, cifrado de credenciales de cámara, observabilidad de accesos
+     denegados y salud de flota) **junto con las alertas escalonadas de pérdida de
+     datos offline (Sección 12.11: día 1 UI → día 3 correo → día 5 WhatsApp/Slack)**
+     y **el Flujo 6 (referido de Tenant por Reseller, Sección 5)** — ambos son, en
+     esencia, extensiones del mismo trabajo de observabilidad y ciclo de vida
+     operativo que ya vive en 8.5. Conectar la API de Anthropic para los módulos de
+     chat (Copiloto en vivo, Messages API + Haiku 4.5) y auditorías visuales de
+     stock (Batch API, Sección 12.5), respetando el aislamiento de tres niveles.
+     **Construir el Motor de Acciones** (Sección 12.10: reglas umbral + canales
+     WhatsApp/Slack/correo + `action_log` auditada) — es requisito de paridad
+     competitiva del MLP, no un extra, y es el mismo motor que sirve las alertas de
+     12.11. **Implementar el endpoint de offboarding de Partner con derecho al
+     olvido** (`DELETE /v1/tenants/{tenant_id}/partners/{partner_id}/data`, Sección
+     12.12) — depende del Módulo de Reventa ya construido en la Fase 2 (es una
+     operación *sobre* la relación Asset Owner↔Partner que ese módulo gestiona), por
+     lo que solo puede cerrarse una vez ambos existen. **Levantar la suite de
+     evaluación de calidad del Copiloto** (Sección 12.9: ~20 casos golden de retail
+     + judge con rúbrica + firma humana) integrada como gate del pipeline antes del
+     primer release comercial.
    * *Entregable:* sistema End-to-End autónomo, gestionable a escala, produciendo
-     insights cognitivos y acciones automáticas auditables, con la infraestructura
-     de Model Registry validada para onboardear un segundo vertical, y con los
-     controles de operación interna (Sección 8.5) y el gate de calidad (12.9)
-     verificados — no solo documentados — antes del primer cliente en producción.
+     insights cognitivos y acciones automáticas auditables (incluidas las alertas
+     escalonadas de flota offline y la revocación mTLS de gateways reemplazados),
+     con la infraestructura de Model Registry validada para onboardear un segundo
+     vertical, el endpoint de purga por derecho al olvido operando bajo auditoría,
+     el ciclo comercial de Reseller (Flujo 6) cerrado, y con los controles de
+     operación interna (Sección 8.5) y el gate de calidad (12.9) verificados — no
+     solo documentados — antes del primer cliente en producción.
 
 4. **Fase 4: Enjambre Cognitivo del Plan Enterprise (post-MLP)**
    * *Objetivo:* implementar la arquitectura completa de la Sección 12 sobre
@@ -3115,6 +3153,31 @@ abajo como registro histórico).
     foco de "build" es solo el diferenciador (aislamiento B2B2B + Motor Base).
     *Trade-off:* documentado por fila; el criterio transversal es no construir lo no
     diferenciador y elegir "buy" de costo ~cero hasta tener volumen.
+
+14. **Enganche de los ítems nuevos de v3.3 al Roadmap (Sección 13).**
+    *Qué:* las seis piezas nuevas de esta iteración (Flujo 6, Flujo 7, mTLS del
+    Edge/8.7, descargas OTA resumibles/9.1, alertas escalonadas/12.11, offboarding
+    con derecho al olvido/12.12) más la tabla Build-vs-Buy/7.3 quedaban escritas en
+    su sección propia pero **sin mención en ninguna fase del roadmap** — vivían en
+    el diseño sin estar ancladas al plan de ejecución. Se ubican así: mTLS (8.7),
+    las descargas resumibles (9.1) y Build-vs-Buy (7.3) → **Fase 1**, junto al
+    Model Manager y el esquema físico, porque son parte del mecanismo definitivo que
+    se construye una sola vez (no tiene sentido levantar Model Manager sin
+    reanudación de descarga, ni el Edge Gateway con una credencial provisional que
+    luego se reemplaza); Flujo 6, Flujo 7 y las alertas escalonadas (12.11) →
+    **Fase 3**, junto a Operación Interna (8.5) y el Motor de Acciones (12.10), por
+    ser extensiones del mismo trabajo de observabilidad y ciclo de vida de flota que
+    ya vive ahí; el offboarding con derecho al olvido (12.12) → también **Fase 3**,
+    porque aunque opera *sobre* el Módulo de Reventa construido en la Fase 2, es una
+    operación de purga auditada que pertenece al mismo bloque de cumplimiento y
+    operación interna que el resto de la fase, no al bloque transaccional de la
+    Fase 2.
+    *Por qué:* un SDD que se declara la única fuente de verdad para desarrollo no
+    puede dejar piezas de arquitectura sin un lugar en el plan de ejecución — el
+    equipo de desarrollo necesita saber en qué sprint cae cada cosa, no solo que
+    existe en algún lado del documento.
+    *Trade-off:* ninguno; es una corrección de trazabilidad, no de contenido técnico
+    — ninguna sección previa cambia, solo se referencian desde el roadmap.
 
 **Verificaciones nuevas de esta iteración (se suman a la tabla A.4)**
 
