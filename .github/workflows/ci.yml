@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  # ── Job 1: pgTAP isolation tests ─────────────────────────────────────────────
+  pgtap:
+    name: pgTAP isolation tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: traxia-analytics-postgres  # built from docker/postgres/Dockerfile
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: traxia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run pgTAP isolation suite
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/traxia
+        run: bash tests/run_tests.sh
+
+  # ── Job 2: pytest (cloud + edge) ─────────────────────────────────────────────
+  pytest:
+    name: pytest unit/integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: traxia-analytics-postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: traxia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Run cloud tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/traxia
+          JWT_SECRET: ${{ secrets.JWT_SECRET_CI }}
+          RTSP_ENCRYPTION_KEY: ${{ secrets.RTSP_ENCRYPTION_KEY_CI }}
+          PLATFORM_ADMIN_SECRET: ${{ secrets.PLATFORM_ADMIN_SECRET_CI }}
+          ANTHROPIC_API_KEY: ""   # disabled in CI — copilot tests mock it
+        run: pytest tests/ -v --ignore=tests/e2e -x
+
+      - name: Run edge tests
+        run: pytest edge/tests/ -v -x
+
+  # ── Job 3: E2E smoke test ─────────────────────────────────────────────────────
+  e2e:
+    name: E2E smoke test (docker-compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build E2E stack
+        run: docker-compose -f docker-compose.e2e.yml build
+
+      - name: Start E2E stack
+        env:
+          ANTHROPIC_API_KEY: ""   # skip copilot/audit items in CI unless key provided
+        run: docker-compose -f docker-compose.e2e.yml up -d
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && break
+            sleep 2
+          done
+
+      - name: Run E2E smoke test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/traxia
+          JWT_SECRET: e2e-smoke-test-secret-2026
+          RTSP_ENCRYPTION_KEY: "eH0I7ppuNWkf394Y2143HGgWpkWhGr45Gwyj1DEvd_4="
+        run: python3 tests/e2e/smoke_test.py
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker-compose -f docker-compose.e2e.yml logs --tail=100
+
+      - name: Stop E2E stack
+        if: always()
+        run: docker-compose -f docker-compose.e2e.yml down -v
+
+  # ── Job 4: Playwright (dashboard) ────────────────────────────────────────────
+  playwright:
+    name: Playwright E2E (dashboard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: dashboard
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: dashboard
+        run: npx playwright test
+
+  # ── Job 5: deploy (DISABLED — requires production secrets) ────────────────────
+  # TODO: Enable once production infrastructure is provisioned.
+  #
+  # Required secrets:
+  #   RENDER_API_KEY        — Render.com deploy hook
+  #   JWT_SECRET            — production JWT signing secret (32+ bytes)
+  #   RTSP_ENCRYPTION_KEY   — production Fernet key for RTSP credentials
+  #   PLATFORM_ADMIN_SECRET — production SuperAdmin JWT secret
+  #   ANTHROPIC_API_KEY     — Anthropic API key for Copiloto
+  #   R2_ACCOUNT_ID         — Cloudflare R2 account ID
+  #   R2_ACCESS_KEY_ID      — R2 API key ID
+  #   R2_SECRET_ACCESS_KEY  — R2 API secret key
+  #   SUPABASE_URL          — Supabase project URL (for MFA)
+  #   SUPABASE_ANON_KEY     — Supabase anonymous key
+  #   SUPABASE_SERVICE_ROLE_KEY — Supabase service role key
+  #   DATABASE_URL          — production PostgreSQL URL (Supabase or Render Postgres)
+  #
+  # deploy:
+  #   name: Deploy to production
+  #   needs: [pgtap, pytest, e2e, playwright]
+  #   runs-on: ubuntu-latest
+  #   if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+  #   steps:
+  #     - name: Trigger Render deploy
+  #       run: |
+  #         curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
