@@ -9,6 +9,7 @@ from cloud.auth.mfa import router as mfa_router
 from cloud.auth.router import router as auth_router
 from cloud.auth.superadmin import router as superadmin_router
 from cloud.superadmin.breakglass import router as breakglass_router
+from cloud.backoffice.rightofforget import router as rightofforget_router
 from cloud.backoffice.router import router as backoffice_router
 from cloud.backoffice.scheduler import start_revocation_scheduler
 from cloud.copilot.router import router as copilot_router
@@ -37,6 +38,7 @@ app.include_router(mfa_router)
 app.include_router(superadmin_router)
 app.include_router(breakglass_router)
 app.include_router(backoffice_router)
+app.include_router(rightofforget_router)
 app.include_router(lifecycle_router)
 app.include_router(models_router)
 app.include_router(telemetry_router)

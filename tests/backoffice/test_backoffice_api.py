@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 
 from cloud.auth.tokens import make_user_token
 from cloud.main import app
-from tests.conftest import encrypt_test_rtsp
+from tests.helpers import encrypt_test_rtsp
 
 # ── Test DB connection (runs as postgres superuser for setup/teardown) ─────────
 _DB_URL = os.environ.get(
