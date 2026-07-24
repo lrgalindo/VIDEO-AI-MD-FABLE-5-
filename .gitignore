@@ -1,0 +1,17 @@
+# OS junk
+.DS_Store
+
+# Node dependencies (reinstall via package-lock.json)
+node_modules/
+
+# Build / test output (regenerable)
+dashboard/dist/
+dashboard/test-results/
+dashboard/tsconfig.tsbuildinfo
+dashboard-tmp/
+
+# TLS material — never commit private keys. auto.crt/auto.key are
+# mediamtx-generated self-signed dev certs (root and edge/ have distinct
+# keypairs); regenerate locally, do not version.
+*.key
+*.crt

@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgl1 libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+# Install with ultralytics for real ByteTrack inference (E2E only — kept out of
+# the production image to minimize footprint).
+RUN pip install --no-cache-dir requests opencv-python-headless "ultralytics>=8.3"
+COPY edge/ ./edge/
+CMD ["python", "-m", "edge.gateway"]

@@ -1,0 +1,3 @@
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; }
+input, select, button, textarea { font-family: inherit; }
